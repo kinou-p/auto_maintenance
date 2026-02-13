@@ -1,0 +1,45 @@
+# .gitignore - Auto Maintenance
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual env
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environnement
+.env
+
+# Base de données
+data/*.db
+data/*.db-journal
+
+# Données générées
+data/screenshots/
+data/reports/
+data/uploads/
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

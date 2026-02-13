@@ -1,0 +1,31 @@
+# ============================================
+# Auto Maintenance - Backend Dependencies
+# ============================================
+
+# --- Framework Web ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.18
+websockets==14.1
+
+# --- Base de données ---
+sqlalchemy[asyncio]==2.0.36
+aiosqlite==0.20.0
+
+# --- Configuration ---
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# --- Traitement d'images ---
+Pillow==11.1.0
+numpy==2.2.1
+scikit-image==0.25.0
+
+# --- Automation navigateur ---
+playwright==1.49.1
+
+# --- HTTP async (pour futures intégrations) ---
+httpx==0.28.1
+
+# --- Utilitaires ---
+python-dotenv==1.0.1
