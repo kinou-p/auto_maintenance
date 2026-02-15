@@ -4,19 +4,20 @@
 
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { getProjects, deleteProject, deleteProjectsBatch, stopProject, startProject, startWorkflow, startBatchWorkflows } from '@/lib/api';
+import { getProjects, deleteProject, deleteProjectsBatch, startBatchWorkflows } from '@/lib/api';
+import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/utils';
 import {
   FolderOpen,
-  Play,
-  Square,
   Trash2,
   RefreshCw,
   CheckSquare,
   X,
   Loader2,
+  Search,
+  Play,
 } from 'lucide-react';
 import type { Project, ProjectStatus } from '@/types';
 
@@ -36,8 +37,9 @@ const STATUS_CONFIG: Record<ProjectStatus, { label: string; variant: 'default' |
 export function ProjectList() {
   const { projects, setProjects, currentProject, setCurrentProject } = useAppStore();
   const [loading, setLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState<{ projectId: number; action: 'start' | 'stop' | 'delete' } | null>(null);
+  const [actionLoading, setActionLoading] = useState<{ projectId: number; action: 'delete' } | null>(null);
   const [selectedProjects, setSelectedProjects] = useState<Set<number>>(new Set());
+  const [searchTerm, setSearchTerm] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [batchLoading, setBatchLoading] = useState(false);
 
@@ -132,34 +134,6 @@ export function ProjectList() {
     }
   };
 
-  const handleStart = async (project: Project) => {
-    setActionLoading({ projectId: project.id, action: 'start' });
-    try {
-      if (project.status === 'stopped') {
-        await startProject(project.id);
-      } else {
-        await startWorkflow(project.id);
-      }
-      await fetchProjects();
-    } catch (err) {
-      console.error('Error starting project:', err);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleStop = async (project: Project) => {
-    setActionLoading({ projectId: project.id, action: 'stop' });
-    try {
-      await stopProject(project.id);
-      await fetchProjects();
-    } catch (err) {
-      console.error('Error stopping project:', err);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
   const handleDelete = async (project: Project) => {
     if (!confirm(`Supprimer le projet ${project.name} ?`)) return;
 
@@ -177,9 +151,14 @@ export function ProjectList() {
     }
   };
 
+  const filteredProjects = projects.filter(p =>
+    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.domain.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between mb-4 shrink-0">
+      <div className="flex items-center justify-between mb-2 shrink-0">
         <h3 className="text-sm font-semibold text-foreground/90">
           Projets <span className="text-muted-foreground ml-1 font-normal">({projects.length})</span>
         </h3>
@@ -260,8 +239,28 @@ export function ProjectList() {
         </div>
       </div>
 
+      <div className="relative mb-3 shrink-0">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
+        <Input
+          placeholder="Rechercher un projet..."
+          className="h-8 pl-8 text-xs bg-muted/30 border-none focus-visible:ring-1 focus-visible:ring-primary/20"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+        {searchTerm && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute right-1 top-1/2 -translate-y-1/2 h-5 w-5 hover:bg-transparent"
+            onClick={() => setSearchTerm('')}
+          >
+            <X className="h-3 w-3 text-muted-foreground/50 hover:text-muted-foreground" />
+          </Button>
+        )}
+      </div>
+
       <div className="flex-1 overflow-y-auto min-h-0 space-y-2 pr-2 custom-scrollbar">
-        {projects.map((project) => {
+        {filteredProjects.map((project) => {
           const statusConfig = STATUS_CONFIG[project.status] || STATUS_CONFIG.created;
           const isSelected = currentProject?.id === project.id;
           const isDeleting = project.status === 'deleting';
@@ -332,34 +331,6 @@ export function ProjectList() {
 
                 {isSelected && !isDeleting && !selectionMode && (
                   <div className="flex items-center justify-end gap-1 mt-3 pt-2 border-t border-border/50 animate-in fade-in duration-200">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 hover:bg-background shadow-sm border border-border/50 hover:border-border"
-                      onClick={(e) => { e.stopPropagation(); handleStart(project); }}
-                      title={project.status === 'ready' || project.status === 'maintenance_done' ? "Lancer la maintenance" : "Démarrer"}
-                      disabled={actionLoading?.projectId === project.id}
-                    >
-                      {actionLoading?.projectId === project.id && actionLoading.action === 'start' ? (
-                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Play className="h-3.5 w-3.5 text-green-600" />
-                      )}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 hover:bg-background shadow-sm border border-border/50 hover:border-border"
-                      onClick={(e) => { e.stopPropagation(); handleStop(project); }}
-                      title="Arrêter"
-                      disabled={actionLoading?.projectId === project.id}
-                    >
-                      {actionLoading?.projectId === project.id && actionLoading.action === 'stop' ? (
-                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Square className="h-3.5 w-3.5 text-orange-500" />
-                      )}
-                    </Button>
                     <Button
                       variant="ghost"
                       size="sm"

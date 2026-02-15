@@ -188,6 +188,27 @@ class DDEVManager:
 
         return result
 
+    async def recreate(self, domain: Optional[str] = None) -> CommandResult:
+        """
+        Supprime et recrée complètement le projet DDEV.
+        Attention : cette opération préserve les fichiers (car destroy n'est pas appelé avec remove_files=True).
+        """
+        await self._log("warning", f"Recréation complète du projet DDEV '{self.project_name}'...")
+        
+        # 1. Stop
+        await self.stop()
+        
+        # 2. Delete (containers/configs)
+        await self.destroy(remove_files=False)
+        
+        # 3. Config
+        config_result = await self.create_project(domain)
+        if not config_result.success:
+            return config_result
+            
+        # 4. Start
+        return await self.start()
+
     async def get_status(self) -> dict:
         """Récupère le statut du projet DDEV."""
         result = await run_ddev_command(

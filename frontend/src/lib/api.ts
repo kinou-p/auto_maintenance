@@ -9,6 +9,7 @@ import type {
   UpdateResult,
   VRTReport,
   Workflow,
+  DDEVContainer,
 } from '@/types';
 
 const API_BASE = '/api';
@@ -156,6 +157,12 @@ export const restartProject = (id: number) =>
     timeout: 180000, // 3 min pour le restart DDEV
   });
 
+export const recreateProject = (id: number) =>
+  apiFetch<{ status: string; message: string }>(`/projects/${id}/recreate`, {
+    method: 'POST',
+    timeout: 300000, // 5 min pour le recreate complet
+  });
+
 // ── Workflows ────────────────────────────────────────────────────
 export const startWorkflow = (
   projectId: number,
@@ -244,4 +251,33 @@ export const resetDDEVGlobal = () =>
   apiFetch<{ status: string; message: string }>('/system/ddev-reset', {
     method: 'POST',
     timeout: 60000,
+  });
+
+// --- System Containers ---
+
+export const listContainers = () =>
+  apiFetch<DDEVContainer[]>('/system/containers');
+
+export const startContainer = (name: string) =>
+  apiFetch<{ status: string; message: string }>(`/system/containers/${name}/start`, {
+    method: 'POST',
+    timeout: 180000,
+  });
+
+export const stopContainer = (name: string) =>
+  apiFetch<{ status: string; message: string }>(`/system/containers/${name}/stop`, {
+    method: 'POST',
+    timeout: 60000,
+  });
+
+export const restartContainer = (name: string) =>
+  apiFetch<{ status: string; message: string }>(`/system/containers/${name}/restart`, {
+    method: 'POST',
+    timeout: 180000,
+  });
+
+export const deleteContainer = (name: string) =>
+  apiFetch<{ status: string; message: string }>(`/system/containers/${name}`, {
+    method: 'DELETE',
+    timeout: 120000,
   });

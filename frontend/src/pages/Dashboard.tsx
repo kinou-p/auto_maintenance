@@ -12,6 +12,11 @@ import {
   checkHealth,
   getActiveWorkflow,
   resetDDEVGlobal,
+  startProject,
+  stopProject,
+  restartProject,
+  recreateProject,
+  getProjectStatus,
 } from '@/lib/api';
 import { ProjectForm } from '@/components/project/ProjectForm';
 import { ProjectList } from '@/components/project/ProjectList';
@@ -22,11 +27,15 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/utils';
+import { Link } from 'react-router-dom';
 import {
-  Wrench,
+  Plus,
+  Trash2,
   Play,
-  StopCircle,
-  ImageIcon,
+  Square,
+  Wrench,
+  RotateCcw,
+  LayoutGrid,
   Heart,
   AlertCircle,
   ChevronDown,
@@ -34,7 +43,10 @@ import {
   CheckCircle2,
   Globe,
   FileText,
-  RotateCcw,
+  ImageIcon,
+  Search,
+  StopCircle,
+  Hammer,
 } from 'lucide-react';
 import type { VRTReport } from '@/types';
 
@@ -48,6 +60,7 @@ export function Dashboard() {
 
   const [vrtReport, setVrtReport] = useState<VRTReport | null>(null);
   const [health, setHealth] = useState<{ ddev: boolean; docker: boolean } | null>(null);
+  const [ddevStatus, setDdevStatus] = useState<string>('unknown');
   const [workflowLoading, setWorkflowLoading] = useState(false);
   const [logPanelHeight, setLogPanelHeight] = useState(256);
   const [showLogs, setShowLogs] = useState(false); // Logs hidden by default or toggleable
@@ -120,8 +133,26 @@ export function Dashboard() {
   useEffect(() => {
     if (!currentProject) {
       setCurrentWorkflow(null);
+      setDdevStatus('unknown');
       return;
     }
+
+    // Charger le statut DDEV initial
+    const fetchStatus = async () => {
+      try {
+        const status = await getProjectStatus(currentProject.id);
+        const ddevData = status.ddev.data as any;
+        const rawStatus = ddevData?.raw?.status || (status.ddev.running ? 'running' : 'stopped');
+        setDdevStatus(rawStatus);
+      } catch (err) {
+        setDdevStatus('error');
+      }
+    };
+
+    fetchStatus();
+
+    // Polling du statut (toutes les 10s)
+    const interval = setInterval(fetchStatus, 10000);
 
     // Vérifier s'il y a un workflow actif pour ce projet
     getActiveWorkflow(currentProject.id)
@@ -138,6 +169,8 @@ export function Dashboard() {
         console.error('[Dashboard] Erreur lors de la vérification du workflow actif:', err);
         setCurrentWorkflow(null);
       });
+
+    return () => clearInterval(interval);
   }, [currentProject, setCurrentWorkflow]);
 
   const handleStartWorkflow = async () => {
@@ -150,6 +183,60 @@ export function Dashboard() {
       setCurrentWorkflow(workflow);
     } catch (err) {
       console.error('Erreur workflow:', err);
+    } finally {
+      setWorkflowLoading(false);
+    }
+  };
+
+  const handleStartProject = async () => {
+    if (!currentProject) return;
+    setWorkflowLoading(true);
+    try {
+      await startProject(currentProject.id);
+      // Refresh project to update status (via store or local fetch if needed)
+      // For now, the WebSocket or a poll might update it, 
+      // but let's assume the user will see the status change.
+    } catch (err) {
+      console.error('Error starting project:', err);
+    } finally {
+      setWorkflowLoading(false);
+    }
+  };
+
+  const handleStopProject = async () => {
+    if (!currentProject) return;
+    setWorkflowLoading(true);
+    try {
+      await stopProject(currentProject.id);
+    } catch (err) {
+      console.error('Error stopping project:', err);
+    } finally {
+      setWorkflowLoading(false);
+    }
+  };
+
+  const handleRestartProject = async () => {
+    if (!currentProject) return;
+    setWorkflowLoading(true);
+    try {
+      await restartProject(currentProject.id);
+    } catch (err) {
+      console.error('Error restarting project:', err);
+    } finally {
+      setWorkflowLoading(false);
+    }
+  };
+
+  const handleRecreateProject = async () => {
+    if (!currentProject) return;
+    if (!confirm(`Recréer complètement l'environnement DDEV pour ${currentProject.name} ? Les fichiers seront préservés.`)) {
+      return;
+    }
+    setWorkflowLoading(true);
+    try {
+      await recreateProject(currentProject.id);
+    } catch (err) {
+      console.error('Error recreating project:', err);
     } finally {
       setWorkflowLoading(false);
     }
@@ -193,8 +280,20 @@ export function Dashboard() {
             <Badge variant="outline" className="text-xs">v1.0</Badge>
           </div>
 
-          {/* Health indicators */}
+          {/* Navigation & Actions */}
           <div className="flex items-center gap-4">
+            <Button
+              variant="outline"
+              size="sm"
+              asChild
+              className="h-8 text-xs px-2"
+            >
+              <Link to="/containers">
+                <LayoutGrid className="mr-1.5 h-3.5 w-3.5" />
+                Containers
+              </Link>
+            </Button>
+
             <Button
               variant="outline"
               size="sm"
@@ -206,6 +305,20 @@ export function Dashboard() {
               <RotateCcw className={cn("mr-1.5 h-3.5 w-3.5", workflowLoading && "animate-spin")} />
               Reset DDEV
             </Button>
+
+            {currentProject && (
+              <div className="flex items-center gap-2 px-3 py-1 bg-muted/30 rounded-full border border-border/50">
+                <div className={cn(
+                  "h-2 w-2 rounded-full animate-pulse",
+                  ddevStatus === 'running' ? "bg-green-500" :
+                    ddevStatus === 'starting' ? "bg-blue-400" :
+                      ddevStatus === 'stopped' ? "bg-orange-500" : "bg-muted-foreground/30"
+                )} />
+                <span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
+                  DDEV: {ddevStatus}
+                </span>
+              </div>
+            )}
 
             {health && (
               <div className="flex items-center gap-3">
@@ -282,14 +395,72 @@ export function Dashboard() {
                         Annuler
                       </Button>
                     ) : (
-                      <Button
-                        size="sm"
-                        onClick={handleStartWorkflow}
-                        disabled={workflowLoading}
-                      >
-                        <Play className="mr-2 h-4 w-4" />
-                        Lancer la maintenance
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleStartProject}
+                          disabled={workflowLoading || ddevStatus === 'running'}
+                          className="text-green-600 border-green-200 hover:bg-green-50"
+                        >
+                          <Play className="mr-2 h-4 w-4" />
+                          Démarrer
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleStopProject}
+                          disabled={workflowLoading || ddevStatus === 'stopped' || ddevStatus === 'unknown'}
+                          className="text-orange-600 border-orange-200 hover:bg-orange-50"
+                        >
+                          <Square className="mr-2 h-4 w-4" />
+                          Arrêter
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleStartProject}
+                          disabled={workflowLoading || ddevStatus === 'running'}
+                          className="text-green-600 border-green-200 hover:bg-green-50"
+                        >
+                          <Play className="mr-2 h-4 w-4" />
+                          Démarrer
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleRestartProject}
+                          disabled={workflowLoading}
+                          className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                        >
+                          <RotateCcw className="mr-2 h-4 w-4" />
+                          Redémarrer
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleRecreateProject}
+                          disabled={workflowLoading}
+                          className="text-purple-600 border-purple-200 hover:bg-purple-50"
+                        >
+                          <Hammer className="mr-2 h-4 w-4" />
+                          Recréer
+                        </Button>
+
+                        <div className="h-6 w-px bg-border mx-1" />
+
+                        <Button
+                          size="sm"
+                          onClick={handleStartWorkflow}
+                          disabled={workflowLoading || currentProject.status === 'stopped'}
+                        >
+                          <Play className="mr-2 h-4 w-4" />
+                          Lancer la maintenance
+                        </Button>
+                      </div>
                     )}
                   </div>
                 </div>

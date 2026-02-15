@@ -149,3 +149,16 @@ export interface HealthCheck {
     docker_running: boolean;
   };
 }
+
+export interface DDEVContainer {
+  name: string;
+  status: string;
+  php_version: string;
+  db_type: string;
+  db_version: string;
+  url: string;
+  approot: string;
+  storage_bytes: number;
+  type: string;
+  router: string;
+}

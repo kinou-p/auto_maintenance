@@ -601,3 +601,29 @@ async def get_project_status(project_id: int) -> dict:
             "project": ProjectResponse.model_validate(project).model_dump(),
             "ddev": ddev_status,
         }
+
+
+@router.post("/{project_id}/recreate", response_model=StatusResponse)
+async def recreate_project(project_id: int) -> StatusResponse:
+    """Recrée complètement l'environnement DDEV d'un projet."""
+    async with async_session() as session:
+        project = await session.get(Project, project_id)
+        if not project:
+            raise HTTPException(404, f"Projet {project_id} introuvable.")
+
+        # Marquer comme initialisation
+        project.status = ProjectStatus.INITIALIZING
+        await session.commit()
+
+        ddev = DDEVManager(project.name)
+        result = await ddev.recreate(project.domain)
+
+        if result.success:
+            project.status = ProjectStatus.READY
+            await session.commit()
+            return StatusResponse(status="success", message="Projet recréé avec succès.")
+
+        # En cas d'erreur
+        project.status = ProjectStatus.ERROR
+        await session.commit()
+        raise HTTPException(500, f"Impossible de recréer le projet : {result.stderr}")

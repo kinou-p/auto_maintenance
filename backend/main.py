@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.api.projects import router as projects_router
 from backend.api.updates_vrt import router as updates_vrt_router
 from backend.api.workflows import router as workflows_router
+from backend.api.system import router as system_router
 from backend.core.config import settings
 from backend.core.websocket import ws_manager
 from backend.models.database import init_db
@@ -110,6 +111,7 @@ app.add_middleware(
 app.include_router(projects_router, prefix="/api")
 app.include_router(workflows_router, prefix="/api")
 app.include_router(updates_vrt_router, prefix="/api")
+app.include_router(system_router, prefix="/api")
 
 # ── Fichiers statiques ───────────────────────────────────────────
 # Monter le dossier data pour servir screenshots et rapports
