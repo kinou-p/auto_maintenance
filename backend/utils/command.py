@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import shlex
+import shutil
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -57,6 +58,15 @@ async def run_command(
     else:
         args = command
         cmd_str = " ".join(command)
+
+    # Résoudre le chemin absolu de l'exécutable
+    executable = shutil.which(args[0])
+    if not executable:
+        # Fallback si non trouvé (pour les commandes builtin ou si déjà absolu)
+        executable = args[0]
+    
+    # Remplacer la commande par son chemin absolu
+    args[0] = executable
 
     last_result: Optional[CommandResult] = None
 

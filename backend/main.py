@@ -65,6 +65,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
     logger.info("Base de données initialisée.")
 
+    # Relancer la file d'attente (reprise des workflows PENDING)
+    from backend.managers.queue_manager import queue_manager
+    import asyncio
+    asyncio.create_task(queue_manager.process_queue())
+    logger.info("File d'attente des workflows démarrée.")
+
     logger.info(f"Application démarrée sur {settings.app_host}:{settings.app_port}")
     yield
 
@@ -174,3 +180,17 @@ async def setup_sudoers() -> dict:
     if success:
         return {"status": "success", "message": "Permissions sudoers configurées."}
     return {"status": "error", "message": "Échec de la configuration sudoers."}
+
+
+@app.post("/api/system/ddev-reset")
+async def global_ddev_reset() -> dict:
+    """Arrête tous les projets DDEV et les services partagés (power-off)."""
+    from backend.utils.command import run_command
+    
+    # ddev power-off arrête tous les projets et le routeur
+    result = await run_command("ddev power-off", timeout=60)
+    
+    if result.success:
+        return {"status": "success", "message": "DDEV a été réinitialisé (power-off)."}
+    
+    return {"status": "error", "message": f"Échec de la réinitialisation : {result.stderr}"}

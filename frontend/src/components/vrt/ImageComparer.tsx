@@ -134,97 +134,92 @@ export function ImageComparer({
                 className={cn(
                   'px-3 py-1 text-xs rounded transition-colors',
                   viewMode === mode
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
-            )}
-          >
-            {mode === 'slider' ? 'Slider' : mode === 'side-by-side' ? 'Côte à côte' : 'Diff'}
-          </button>
-        ))}
-      </div>
-
-      {/* Comparaison */}
-      {viewMode === 'slider' && (
-        <div
-          ref={containerRef}
-          className="relative w-full overflow-hidden rounded-lg border border-border cursor-col-resize select-none"
-          style={{ aspectRatio: device === 'mobile' ? '375/812' : '16/9', maxHeight: '500px' }}
-          onMouseDown={() => setIsDragging(true)}
-          onMouseUp={() => setIsDragging(false)}
-          onMouseLeave={() => setIsDragging(false)}
-          onMouseMove={handleMouseMove}
-          onTouchStart={() => setIsDragging(true)}
-          onTouchEnd={() => setIsDragging(false)}
-          onTouchMove={handleTouchMove}
-        >
-          {/* Image après (fond) */}
-          <img
-            src={getScreenshotUrl(afterSrc)}
-            alt="Après"
-            className="absolute inset-0 w-full h-full object-cover object-top"
-          />
-          {/* Image avant (coupée par le slider) */}
-          <div
-            className="absolute inset-0 overflow-hidden"
-            style={{ width: `${sliderPos}%` }}
-          >
-            <img
-              src={getScreenshotUrl(beforeSrc)}
-              alt="Avant"
-              className="absolute inset-0 w-full h-full object-cover object-top"
-              style={{ width: `${containerRef.current?.clientWidth || 0}px` }}
-            />
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+                )}
+              >
+                {mode === 'slider' ? 'Slider' : mode === 'side-by-side' ? 'Côte à côte' : 'Diff'}
+              </button>
+            ))}
           </div>
-          {/* Ligne du slider */}
-          <div
-            className="absolute top-0 bottom-0 w-0.5 bg-white shadow-lg z-10"
-            style={{ left: `${sliderPos}%` }}
-          >
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-8 w-8 rounded-full bg-white shadow-lg flex items-center justify-center">
-              <span className="text-xs font-bold text-gray-800">⇔</span>
+
+          {/* Comparaison */}
+          {viewMode === 'slider' && (
+            <div
+              ref={containerRef}
+              className="relative w-full overflow-hidden rounded-lg border border-border cursor-col-resize select-none"
+              style={{ aspectRatio: device === 'mobile' ? '375/812' : '16/9', maxHeight: '500px' }}
+              onMouseDown={() => setIsDragging(true)}
+              onMouseUp={() => setIsDragging(false)}
+              onMouseLeave={() => setIsDragging(false)}
+              onMouseMove={handleMouseMove}
+              onTouchStart={() => setIsDragging(true)}
+              onTouchEnd={() => setIsDragging(false)}
+              onTouchMove={handleTouchMove}
+            >
+              {/* Image après (fond) */}
+              <img
+                src={getScreenshotUrl(afterSrc)}
+                alt="Après"
+                className="absolute inset-0 w-full h-full object-cover object-top"
+              />
+              {/* Image avant (imposée par dessus avec clip-path) */}
+              <img
+                src={getScreenshotUrl(beforeSrc)}
+                alt="Avant"
+                className="absolute inset-0 w-full h-full object-cover object-top"
+                style={{ clipPath: `inset(0 ${100 - sliderPos}% 0 0)` }}
+              />
+              {/* Ligne du slider */}
+              <div
+                className="absolute top-0 bottom-0 w-0.5 bg-white shadow-lg z-10"
+                style={{ left: `${sliderPos}%` }}
+              >
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-8 w-8 rounded-full bg-white shadow-lg flex items-center justify-center">
+                  <span className="text-xs font-bold text-gray-800">⇔</span>
+                </div>
+              </div>
+              {/* Labels */}
+              <span className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded">
+                AVANT
+              </span>
+              <span className="absolute top-2 right-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded">
+                APRÈS
+              </span>
             </div>
-          </div>
-          {/* Labels */}
-          <span className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded">
-            AVANT
-          </span>
-          <span className="absolute top-2 right-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded">
-            APRÈS
-          </span>
-        </div>
-      )}
+          )}
 
-      {viewMode === 'side-by-side' && (
-        <div className="grid grid-cols-2 gap-2">
-          <div className="space-y-1">
-            <span className="text-xs text-muted-foreground">Avant</span>
-            <img
-              src={getScreenshotUrl(beforeSrc)}
-              alt="Avant"
-              className="w-full rounded-lg border border-border"
-            />
-          </div>
-          <div className="space-y-1">
-            <span className="text-xs text-muted-foreground">Après</span>
-            <img
-              src={getScreenshotUrl(afterSrc)}
-              alt="Après"
-              className="w-full rounded-lg border border-border"
-            />
-          </div>
-        </div>
-      )}
+          {viewMode === 'side-by-side' && (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <span className="text-xs text-muted-foreground">Avant</span>
+                <img
+                  src={getScreenshotUrl(beforeSrc)}
+                  alt="Avant"
+                  className="w-full rounded-lg border border-border"
+                />
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs text-muted-foreground">Après</span>
+                <img
+                  src={getScreenshotUrl(afterSrc)}
+                  alt="Après"
+                  className="w-full rounded-lg border border-border"
+                />
+              </div>
+            </div>
+          )}
 
-      {viewMode === 'diff' && diffSrc && (
-        <div className="space-y-1">
-          <span className="text-xs text-muted-foreground">Image de diff</span>
-          <img
-            src={getScreenshotUrl(diffSrc)}
-            alt="Diff"
-            className="w-full rounded-lg border border-border"
-          />
-        </div>
-      )}
+          {viewMode === 'diff' && diffSrc && (
+            <div className="space-y-1">
+              <span className="text-xs text-muted-foreground">Image de diff</span>
+              <img
+                src={getScreenshotUrl(diffSrc)}
+                alt="Diff"
+                className="w-full rounded-lg border border-border"
+              />
+            </div>
+          )}
         </>
       )}
     </div>

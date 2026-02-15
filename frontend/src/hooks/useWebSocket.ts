@@ -51,14 +51,15 @@ export function useWebSocket(projectId?: number) {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          const state = useAppStore.getState();
 
           if (data.type === 'progress') {
-            storeRef.current.setProgress(data.progress, data.step);
+            state.setProgress(data.progress, data.step);
           } else if (data.type === 'step_completed') {
             // Mise à jour en temps réel des étapes complétées/échouées
-            const currentWorkflow = storeRef.current.currentWorkflow;
+            const currentWorkflow = state.currentWorkflow;
             if (currentWorkflow && currentWorkflow.id === data.workflow_id) {
-              storeRef.current.setCurrentWorkflow({
+              state.setCurrentWorkflow({
                 ...currentWorkflow,
                 current_step: data.step,
                 steps_completed: data.steps_completed || currentWorkflow.steps_completed,
@@ -67,36 +68,43 @@ export function useWebSocket(projectId?: number) {
             }
           } else if (data.type === 'workflow_status') {
             // Événement de changement de statut du workflow
-            const currentWorkflow = storeRef.current.currentWorkflow;
+            const currentWorkflow = state.currentWorkflow;
             if (currentWorkflow && currentWorkflow.id === data.workflow_id) {
               // Mettre à jour le workflow actuel
-              storeRef.current.setCurrentWorkflow({
+              state.setCurrentWorkflow({
                 ...currentWorkflow,
                 status: data.status,
               });
             }
-            // Si le workflow est terminé, mettre à jour le projet
-            if (data.completed || data.status === 'failed' || data.status === 'cancelled') {
-              const project = storeRef.current.projects.find(p => p.id === data.project_id);
+
+            // Mettre à jour le statut du projet concerné
+            if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+              const project = state.projects.find(p => p.id === data.project_id);
               if (project) {
                 const newStatus = data.completed ? 'maintenance_done' : 'error';
-                storeRef.current.updateProject({ ...project, status: newStatus });
+                state.updateProject({ ...project, status: newStatus });
+              }
+            } else if (data.status === 'running') {
+              // Si le workflow démarre, mettre le projet en maintenance
+              const project = state.projects.find(p => p.id === data.project_id);
+              if (project && project.status !== 'maintenance_in_progress') {
+                state.updateProject({ ...project, status: 'maintenance_in_progress' });
               }
             }
           } else if (data.type === 'project_deletion') {
             // Événement de suppression de projet
             if (data.status === 'completed') {
               // Retirer le projet de la liste
-              storeRef.current.removeProject(data.project_id);
+              state.removeProject(data.project_id);
             } else if (data.status === 'failed') {
               // Marquer le projet comme en erreur
-              const project = storeRef.current.projects.find(p => p.id === data.project_id);
+              const project = state.projects.find(p => p.id === data.project_id);
               if (project) {
-                storeRef.current.updateProject({ ...project, status: 'error' });
+                state.updateProject({ ...project, status: 'error' });
               }
             }
             // Logger le message de suppression
-            storeRef.current.addLog({
+            state.addLog({
               timestamp: new Date().toISOString(),
               level: data.status === 'failed' ? 'error' : 'info',
               message: data.message,
@@ -107,15 +115,15 @@ export function useWebSocket(projectId?: number) {
             console.log(`[WS] ${data.type} reçu:`, data);
           } else if (data.type === 'log' || data.level) {
             // Messages de logs avec timestamp
-            storeRef.current.addLog({
+            state.addLog({
               timestamp: data.timestamp || new Date().toISOString(),
               level: data.level || 'info',
               message: data.message || '',
               step: data.step,
             } as LogMessage);
           }
-        } catch {
-          console.warn('[WS] Message non parsable:', event.data);
+        } catch (err) {
+          console.warn('[WS] Erreur de parsing ou de traitement:', err);
         }
       };
 

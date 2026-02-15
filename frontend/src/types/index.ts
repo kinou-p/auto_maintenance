@@ -107,6 +107,9 @@ export interface VRTReport {
   total_pages: number;
   total_passed: number;
   total_failed: number;
+  updates_total: number;
+  updates_success: number;
+  updates_failed: number;
   items: VRTReportItem[];
 }
 

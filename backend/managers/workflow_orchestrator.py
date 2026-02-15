@@ -136,6 +136,15 @@ class WorkflowOrchestrator:
                     workflow.started_at = datetime.now(timezone.utc)
                     await session.commit()
 
+            # Notifier le frontend du démarrage
+            await ws_manager.broadcast({
+                "type": "workflow_status",
+                "workflow_id": self.workflow_id,
+                "project_id": self.project_id,
+                "status": "running",
+                "completed": False,
+            })
+
             # Initialiser les managers
             self._ddev = DDEVManager(project.name, self.logger)
             self._wp = WordPressManager(project.name, self._ddev, self.logger)
@@ -500,6 +509,20 @@ class WorkflowOrchestrator:
             "type": "updates_results",
             "data": [r.model_dump() for r in results],
         })
+
+        # Sauvegarder les stats dans le workflow
+        async with async_session() as session:
+            workflow = await session.get(Workflow, self.workflow_id)
+            if workflow:
+                total_success = sum(1 for r in results if r.success)
+                total_failed = sum(1 for r in results if not r.success)
+                workflow.updates_stats = {
+                    "total": len(results),
+                    "success": total_success,
+                    "failed": total_failed,
+                    "img_optim_saved_bytes": 0,  # Placeholder pour future feature
+                }
+                await session.commit()
 
     async def _step_vrt_compare(self) -> None:
         """Étape 10 : Comparaison visuelle avant/après."""

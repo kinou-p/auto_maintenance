@@ -113,6 +113,9 @@ class VRTReportResponse(BaseModel):
     total_pages: int
     total_passed: int
     total_failed: int
+    updates_total: int = 0
+    updates_success: int = 0
+    updates_failed: int = 0
     items: list[VRTReportItem]
 
 

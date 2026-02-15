@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { getProjects, deleteProject, stopProject, startProject } from '@/lib/api';
+import { getProjects, deleteProject, deleteProjectsBatch, stopProject, startProject, startWorkflow, startBatchWorkflows } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/utils';
@@ -14,7 +14,9 @@ import {
   Square,
   Trash2,
   RefreshCw,
-  Globe,
+  CheckSquare,
+  X,
+  Loader2,
 } from 'lucide-react';
 import type { Project, ProjectStatus } from '@/types';
 
@@ -32,9 +34,12 @@ const STATUS_CONFIG: Record<ProjectStatus, { label: string; variant: 'default' |
 };
 
 export function ProjectList() {
-  const { projects, setProjects, currentProject, setCurrentProject, removeProject, updateProject } = useAppStore();
+  const { projects, setProjects, currentProject, setCurrentProject } = useAppStore();
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<{ projectId: number; action: 'start' | 'stop' | 'delete' } | null>(null);
+  const [selectedProjects, setSelectedProjects] = useState<Set<number>>(new Set());
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [batchLoading, setBatchLoading] = useState(false);
 
   const fetchProjects = async () => {
     setLoading(true);
@@ -53,26 +58,91 @@ export function ProjectList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleDelete = async (project: Project) => {
-    if (!confirm(`Supprimer le projet "${project.name}" ? Cette action est irréversible.`)) {
+  const toggleSelection = (id: number) => {
+    const newSet = new Set(selectedProjects);
+    if (newSet.has(id)) {
+      newSet.delete(id);
+    } else {
+      newSet.add(id);
+    }
+    setSelectedProjects(newSet);
+  };
+
+  const toggleSelectionMode = () => {
+    setSelectionMode(!selectionMode);
+    setSelectedProjects(new Set());
+  };
+
+  const handleBatchRun = async () => {
+    if (selectedProjects.size === 0) return;
+
+    setBatchLoading(true);
+    try {
+      const workflows = await startBatchWorkflows(Array.from(selectedProjects));
+
+      // Si des workflows ont été créés, on focus le premier projet
+      if (workflows && workflows.length > 0) {
+        const firstProjectId = workflows[0]?.project_id;
+        if (firstProjectId) {
+          const projectToFocus = projects.find(p => p.id === firstProjectId);
+          if (projectToFocus) {
+            setCurrentProject(projectToFocus);
+          }
+        }
+      }
+
+      // Optionnel : notification toaster
+      setSelectionMode(false);
+      setSelectedProjects(new Set());
+    } catch (err) {
+      console.error('Erreur batch:', err);
+      alert('Erreur lors du lancement groupé.');
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedProjects.size === 0) return;
+
+    if (!confirm(`Supprimer ces ${selectedProjects.size} projets ? Cette action est irréversible.`)) {
       return;
     }
-    
-    // Désélectionner si c'est le projet actuel
-    if (currentProject?.id === project.id) {
-      setCurrentProject(null);
-    }
-    
-    setActionLoading({ projectId: project.id, action: 'delete' });
-    
+
+    setBatchLoading(true);
     try {
-      await deleteProject(project.id);
-      // Recharger immédiatement pour voir le statut "deleting"
-      fetchProjects();
+      await deleteProjectsBatch(Array.from(selectedProjects));
+      // Recharger la liste pour voir les statuts "deleting"
+      await fetchProjects();
+      setSelectionMode(false);
+      setSelectedProjects(new Set());
     } catch (err) {
-      console.error('Erreur lors de la suppression:', err);
-      const errorMsg = err instanceof Error ? err.message : 'Erreur inconnue';
-      alert(`Erreur lors du lancement de la suppression:\n\n${errorMsg}`);
+      console.error('Erreur batch delete:', err);
+      alert('Erreur lors de la suppression groupée.');
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  const handleSelectAll = () => {
+    if (selectedProjects.size === projects.length) {
+      setSelectedProjects(new Set());
+    } else {
+      setSelectedProjects(new Set(projects.map(p => p.id)));
+    }
+  };
+
+  const handleStart = async (project: Project) => {
+    setActionLoading({ projectId: project.id, action: 'start' });
+    try {
+      if (project.status === 'stopped') {
+        await startProject(project.id);
+      } else {
+        await startWorkflow(project.id);
+      }
+      await fetchProjects();
+    } catch (err) {
+      console.error('Error starting project:', err);
     } finally {
       setActionLoading(null);
     }
@@ -82,135 +152,242 @@ export function ProjectList() {
     setActionLoading({ projectId: project.id, action: 'stop' });
     try {
       await stopProject(project.id);
-      // Mettre à jour le statut localement
-      updateProject({ ...project, status: 'stopped' });
+      await fetchProjects();
     } catch (err) {
-      console.error('Erreur:', err);
-      alert(`Erreur lors de l'arrêt du projet: ${err instanceof Error ? err.message : 'Erreur inconnue'}`);
+      console.error('Error stopping project:', err);
     } finally {
       setActionLoading(null);
     }
   };
 
-  const handleStart = async (project: Project) => {
-    setActionLoading({ projectId: project.id, action: 'start' });
+  const handleDelete = async (project: Project) => {
+    if (!confirm(`Supprimer le projet ${project.name} ?`)) return;
+
+    setActionLoading({ projectId: project.id, action: 'delete' });
     try {
-      await startProject(project.id);
-      // Mettre à jour le statut localement
-      updateProject({ ...project, status: 'ready' });
+      await deleteProject(project.id);
+      if (currentProject?.id === project.id) {
+        setCurrentProject(null);
+      }
+      await fetchProjects();
     } catch (err) {
-      console.error('Erreur:', err);
-      alert(`Erreur lors du démarrage du projet: ${err instanceof Error ? err.message : 'Erreur inconnue'}`);
+      console.error('Error deleting project:', err);
     } finally {
       setActionLoading(null);
     }
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Projets ({projects.length})</h3>
-        <Button variant="ghost" size="icon" onClick={fetchProjects} disabled={loading}>
-          <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
-        </Button>
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between mb-4 shrink-0">
+        <h3 className="text-sm font-semibold text-foreground/90">
+          Projets <span className="text-muted-foreground ml-1 font-normal">({projects.length})</span>
+        </h3>
+        <div className="flex items-center gap-1">
+          {selectionMode ? (
+            <div className="flex items-center gap-1 animate-in fade-in slide-in-from-right-4 duration-200">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={handleSelectAll}
+                title={selectedProjects.size === projects.length ? "Tout désélectionner" : "Tout sélectionner"}
+              >
+                <CheckSquare className={cn("h-4 w-4", selectedProjects.size === projects.length && "text-primary")} />
+              </Button>
+
+              <div className="h-4 w-px bg-border mx-1" />
+
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={selectedProjects.size === 0 || batchLoading}
+                onClick={handleBatchDelete}
+                className="h-7 text-xs px-2"
+                title="Supprimer la sélection"
+              >
+                {batchLoading ? (
+                  <RefreshCw className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3 w-3" />
+                )}
+                <span className="ml-1.5 hidden sm:inline">{selectedProjects.size}</span>
+              </Button>
+
+              <Button
+                size="sm"
+                variant="default"
+                disabled={selectedProjects.size === 0 || batchLoading}
+                onClick={handleBatchRun}
+                className="h-7 text-xs px-2"
+                title="Lancer la maintenance sélection"
+              >
+                {batchLoading ? (
+                  <RefreshCw className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Play className="h-3 w-3" />
+                )}
+                <span className="ml-1.5 hidden sm:inline">{selectedProjects.size}</span>
+              </Button>
+
+              <Button size="icon" variant="ghost" className="h-7 w-7 ml-1" onClick={toggleSelectionMode}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1">
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8 hover:bg-muted"
+                onClick={toggleSelectionMode}
+                title="Sélection multiple"
+                disabled={projects.length === 0}
+              >
+                <CheckSquare className="h-4 w-4 text-muted-foreground" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 hover:bg-muted"
+                onClick={fetchProjects}
+                disabled={loading}
+              >
+                <RefreshCw className={cn("h-4 w-4 text-muted-foreground", loading && "animate-spin")} />
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="space-y-2">
+      <div className="flex-1 overflow-y-auto min-h-0 space-y-2 pr-2 custom-scrollbar">
         {projects.map((project) => {
           const statusConfig = STATUS_CONFIG[project.status] || STATUS_CONFIG.created;
           const isSelected = currentProject?.id === project.id;
           const isDeleting = project.status === 'deleting';
+          const isChecked = selectedProjects.has(project.id);
+
+          // Determine if project is running a task
+          const isRunning = ['initializing', 'wordpress_installed', 'importing', 'maintenance_in_progress'].includes(project.status);
 
           return (
             <div
               key={project.id}
               className={cn(
-                'p-3 rounded-lg border cursor-pointer transition-colors',
-                isSelected
-                  ? 'border-primary bg-primary/5'
-                  : 'border-border hover:border-primary/30',
-                isDeleting && 'opacity-60',
+                'group relative rounded-md border transition-all duration-200',
+                isSelected && !selectionMode
+                  ? 'border-primary bg-primary/5 shadow-sm'
+                  : 'border-transparent bg-card hover:bg-accent/50 hover:border-border/50',
+                isDeleting && 'opacity-60 pointer-events-none grayscale',
+                isChecked && selectionMode && 'bg-primary/10 border-primary/50'
               )}
-              onClick={() => !isDeleting && setCurrentProject(project)}
+              onClick={() => {
+                if (selectionMode) {
+                  toggleSelection(project.id);
+                } else if (!isDeleting) {
+                  setCurrentProject(project);
+                }
+              }}
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {isDeleting ? (
-                    <RefreshCw className="h-4 w-4 text-primary animate-spin" />
-                  ) : (
-                    <FolderOpen className="h-4 w-4 text-primary" />
-                  )}
-                  <span className="text-sm font-medium">{project.name}</span>
-                </div>
-                <Badge variant={statusConfig.variant}>{statusConfig.label}</Badge>
-              </div>
-
-              <div className="flex items-center gap-2 mt-2 text-xs">
-                <Globe className="h-3 w-3 text-muted-foreground" />
-                <a
-                  href={`http://${project.domain}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-muted-foreground hover:text-primary underline"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {project.domain}
-                </a>
-              </div>
-
-              {isSelected && !isDeleting && (
-                <div className="flex items-center gap-1 mt-3 pt-2 border-t border-border">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => { e.stopPropagation(); handleStart(project); }}
-                    title="Démarrer"
-                    disabled={actionLoading?.projectId === project.id}
-                  >
-                    {actionLoading?.projectId === project.id && actionLoading.action === 'start' ? (
-                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Play className="h-3.5 w-3.5" />
-                    )}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => { e.stopPropagation(); handleStop(project); }}
-                    title="Arrêter"
-                    disabled={actionLoading?.projectId === project.id}
-                  >
-                    {actionLoading?.projectId === project.id && actionLoading.action === 'stop' ? (
-                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Square className="h-3.5 w-3.5" />
-                    )}
-                  </Button>
-                  <div className="flex-1" />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => { e.stopPropagation(); handleDelete(project); }}
-                    className="text-destructive hover:text-destructive"
-                    title="Supprimer"
-                    disabled={actionLoading?.projectId === project.id}
-                  >
-                    {actionLoading?.projectId === project.id && actionLoading.action === 'delete' ? (
-                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-3.5 w-3.5" />
-                    )}
-                  </Button>
+              {/* Selection Checkbox Overlay */}
+              {selectionMode && (
+                <div className="absolute left-3 top-3 z-10">
+                  <div className={cn(
+                    "h-4 w-4 rounded border flex items-center justify-center transition-all bg-background",
+                    isChecked ? "bg-primary border-primary text-primary-foreground" : "border-muted-foreground"
+                  )}>
+                    {isChecked && <CheckSquare className="h-3 w-3" />}
+                  </div>
                 </div>
               )}
+
+              <div className={cn("p-3", selectionMode && "pl-9")}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      {isDeleting ? (
+                        <RefreshCw className="h-3.5 w-3.5 text-muted-foreground animate-spin shrink-0" />
+                      ) : isRunning ? (
+                        <Loader2 className="h-3.5 w-3.5 text-primary animate-spin shrink-0" />
+                      ) : (
+                        <FolderOpen className={cn("h-3.5 w-3.5 shrink-0", isSelected ? "text-primary" : "text-muted-foreground")} />
+                      )}
+                      <span className={cn("text-sm font-medium truncate", isSelected && "text-primary")}>
+                        {project.name}
+                      </span>
+                    </div>
+
+                    <div className="text-xs text-muted-foreground/70 truncate pl-5.5">
+                      {project.domain}
+                    </div>
+                  </div>
+
+                  <Badge
+                    variant={statusConfig.variant}
+                    className="shrink-0 text-[10px] px-1.5 py-0 h-5 font-normal"
+                  >
+                    {statusConfig.label}
+                  </Badge>
+                </div>
+
+                {isSelected && !isDeleting && !selectionMode && (
+                  <div className="flex items-center justify-end gap-1 mt-3 pt-2 border-t border-border/50 animate-in fade-in duration-200">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 hover:bg-background shadow-sm border border-border/50 hover:border-border"
+                      onClick={(e) => { e.stopPropagation(); handleStart(project); }}
+                      title={project.status === 'ready' || project.status === 'maintenance_done' ? "Lancer la maintenance" : "Démarrer"}
+                      disabled={actionLoading?.projectId === project.id}
+                    >
+                      {actionLoading?.projectId === project.id && actionLoading.action === 'start' ? (
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Play className="h-3.5 w-3.5 text-green-600" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 hover:bg-background shadow-sm border border-border/50 hover:border-border"
+                      onClick={(e) => { e.stopPropagation(); handleStop(project); }}
+                      title="Arrêter"
+                      disabled={actionLoading?.projectId === project.id}
+                    >
+                      {actionLoading?.projectId === project.id && actionLoading.action === 'stop' ? (
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Square className="h-3.5 w-3.5 text-orange-500" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 hover:bg-background shadow-sm border border-border/50 hover:border-border hover:text-destructive"
+                      onClick={(e) => { e.stopPropagation(); handleDelete(project); }}
+                      title="Supprimer"
+                      disabled={actionLoading?.projectId === project.id}
+                    >
+                      {actionLoading?.projectId === project.id && actionLoading.action === 'delete' ? (
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
           );
         })}
 
         {projects.length === 0 && !loading && (
-          <p className="text-sm text-muted-foreground text-center py-8">
-            Aucun projet. Créez votre premier projet ci-dessus.
-          </p>
+          <div className="flex flex-col items-center justify-center py-12 text-center border-2 border-dashed border-border/50 rounded-lg bg-muted/20">
+            <FolderOpen className="h-8 w-8 text-muted-foreground/30 mb-2" />
+            <p className="text-sm text-muted-foreground">
+              Aucun projet
+            </p>
+          </div>
         )}
       </div>
     </div>

@@ -240,8 +240,7 @@ class WordPressManager:
 
         if result.success:
             await self._log("success", "Import .wpress réussi via WP-CLI.", step="wpress_import")
-            await self._post_import_cleanup()
-            return True
+            return await self._post_import_cleanup()
 
         # Fallback : import via Playwright (interface web)
         await self._log(
@@ -254,8 +253,7 @@ class WordPressManager:
 
         if playwright_success:
             await self._log("success", "Import .wpress réussi via Playwright.", step="wpress_import")
-            await self._post_import_cleanup()
-            return True
+            return await self._post_import_cleanup()
 
         await self._log("error", "Échec de l'import .wpress (WP-CLI et Playwright).", step="wpress_import")
         return False
@@ -313,7 +311,7 @@ class WordPressManager:
             await self._log("error", f"Erreur Playwright : {e}", step="wpress_import")
             return False
 
-    async def _post_import_cleanup(self) -> None:
+    async def _post_import_cleanup(self) -> bool:
         """Opérations post-import : search-replace URLs, permaliens, cache, restart."""
         await self._log("info", "Nettoyage post-import...", step="wpress_import")
 
@@ -360,11 +358,15 @@ class WordPressManager:
                     step="wpress_import",
                 )
 
-            # Extraire les domaines (sans scheme) pour couvrir les chemins relatifs
+            # Extraire les domaines et ports
             from urllib.parse import urlparse
 
-            old_domain = urlparse(old_site_url).netloc
-            new_domain = urlparse(new_site_url).netloc
+            old_parsed = urlparse(old_site_url)
+            new_parsed = urlparse(new_site_url)
+            
+            old_domain = old_parsed.netloc
+            new_domain = new_parsed.netloc
+            new_port = new_parsed.port
 
             if old_domain and new_domain and old_domain != new_domain:
                 await self._log(
@@ -372,9 +374,31 @@ class WordPressManager:
                     f"Search-replace domaines : {old_domain} → {new_domain}",
                     step="wpress_import",
                 )
+                
+                # Si on ajoute juste un port (ex: domain.com -> domain.com:33000)
+                # On doit utiliser une regex pour éviter le double port (domain.com:33000:33000)
+                # car le remplacement complet d'URL a déjà ajouté le port sur les URLs absolues.
+                use_regex = False
+                search_term = old_domain
+                
+                if new_port and old_domain == new_parsed.hostname:
+                    import re
+                    # Regex : old_domain non suivi par :new_port
+                    # Note : on échappe les points pour la regex PHP
+                    escaped_domain = re.escape(old_domain)
+                    search_term = f"{escaped_domain}(?!:{new_port})"
+                    use_regex = True
+                    await self._log("info", f"Utilisation de regex pour éviter double port : {search_term}", step="wpress_import")
+
+                cmd = (
+                    f'search-replace "{search_term}" "{new_domain}"'
+                    f' --all-tables --skip-columns=guid --report-changed-only'
+                )
+                if use_regex:
+                    cmd += " --regex"
+
                 sr_domain_result = await run_wp_cli(
-                    f'search-replace "{old_domain}" "{new_domain}"'
-                    f' --all-tables --skip-columns=guid --report-changed-only',
+                    cmd,
                     str(self.project_dir),
                     timeout=300,
                 )
@@ -520,6 +544,14 @@ class WordPressManager:
                             f"Tentative {attempt + 1}/{max_retries} - Code HTTP {response.status_code}",
                             step="wpress_import",
                         )
+                        # Si on a un 502, on tente de redémarrer DDEV à mi-chemin
+                        if response.status_code == 502 and attempt == 3:
+                            await self._log(
+                                "warning",
+                                "Détection persistante d'une erreur 502. Tentative de redémarrage de DDEV...",
+                                step="wpress_import",
+                            )
+                            await self.ddev.restart()
             except Exception as e:
                 await self._log(
                     "warning",
@@ -530,15 +562,17 @@ class WordPressManager:
 
         if not site_accessible:
             await self._log(
-                "warning",
-                "Le site pourrait ne pas être complètement fonctionnel. "
-                "Les screenshots pourraient être affectés.",
+                "error",
+                "Le site ne répond pas correctement (502 ou pas de CSS) après plusieurs tentatives. "
+                "Arrêt du workflow pour éviter des screenshots erronés.",
                 step="wpress_import",
             )
+            return False
 
         # ── 9. Stabilisation finale ──
         await self._log("info", "Stabilisation du site (5s)...", step="wpress_import")
         await asyncio.sleep(5)
+        return True
 
     # ── Mises à jour ──────────────────────────────────────────────
 

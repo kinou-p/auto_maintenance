@@ -41,12 +41,12 @@ async function apiFetch<T>(
     return res.json();
   } catch (error) {
     clearTimeout(timeoutId);
-    
+
     // Si c'est une erreur d'abort (timeout)
     if (error instanceof Error && error.name === 'AbortError') {
       throw new Error(`L'opération a dépassé le délai maximum (${timeout / 1000}s). Elle continue peut-être en arrière-plan.`);
     }
-    
+
     // Si c'est une erreur réseau (backend inaccessible)
     if (error instanceof TypeError && error.message === 'Failed to fetch') {
       throw new Error('Impossible de contacter le serveur backend. Vérifiez qu\'il est démarré.');
@@ -74,11 +74,13 @@ export const createProject = async (
   name: string,
   domain?: string,
   wpress?: File,
+  localFilePath?: string,
 ): Promise<Project> => {
   const formData = new FormData();
   formData.append('name', name);
   if (domain) formData.append('domain', domain);
   if (wpress) formData.append('wpress_file', wpress);
+  if (localFilePath) formData.append('local_file_path', localFilePath);
 
   const res = await fetch(`${API_BASE}/projects/`, {
     method: 'POST',
@@ -92,6 +94,9 @@ export const createProject = async (
 
   return res.json();
 };
+
+export const listWpressFiles = () =>
+  apiFetch<{ path: string; name: string; size: number; created: number }[]>('/projects/files');
 
 export const createProjectsBatch = async (
   wpressFiles: File[],
@@ -114,10 +119,25 @@ export const createProjectsBatch = async (
   return res.json();
 };
 
+export const createProjectsFromLibrary = async (
+  files: string[],
+): Promise<{ status: string; message: string; created: Project[]; errors: Array<{ file: string; error: string }> }> => {
+  return apiFetch<{ status: string; message: string; created: Project[]; errors: Array<{ file: string; error: string }> }>('/projects/batch-library', {
+    method: 'POST',
+    body: JSON.stringify({ files }),
+  });
+};
+
 export const deleteProject = (id: number) =>
   apiFetch<{ status: string; message: string }>(`/projects/${id}`, {
     method: 'DELETE',
     timeout: 30000, // 30s - la requête retourne immédiatement, la suppression continue en arrière-plan
+  });
+
+export const deleteProjectsBatch = (ids: number[]) =>
+  apiFetch<{ status: string; message: string; count: number }>('/projects/batch-delete', {
+    method: 'POST',
+    body: JSON.stringify(ids), // FastAPI avec list[int] en body top-level
   });
 
 export const stopProject = (id: number) =>
@@ -128,6 +148,12 @@ export const stopProject = (id: number) =>
 export const startProject = (id: number) =>
   apiFetch<{ status: string; message: string }>(`/projects/${id}/start`, {
     method: 'POST',
+  });
+
+export const restartProject = (id: number) =>
+  apiFetch<{ status: string; message: string }>(`/projects/${id}/restart`, {
+    method: 'POST',
+    timeout: 180000, // 3 min pour le restart DDEV
   });
 
 // ── Workflows ────────────────────────────────────────────────────
@@ -143,6 +169,12 @@ export const startWorkflow = (
       steps,
       selected_updates: selectedUpdates,
     }),
+  });
+
+export const startBatchWorkflows = (projectIds: number[]) =>
+  apiFetch<Workflow[]>('/workflows/batch', {
+    method: 'POST',
+    body: JSON.stringify(projectIds),
   });
 
 export const getWorkflow = (id: number) =>
@@ -206,4 +238,10 @@ export const getVRTJsonReport = (projectId: number) =>
 export const setupSudoers = () =>
   apiFetch<{ status: string; message: string }>('/setup/sudoers', {
     method: 'POST',
+  });
+
+export const resetDDEVGlobal = () =>
+  apiFetch<{ status: string; message: string }>('/system/ddev-reset', {
+    method: 'POST',
+    timeout: 60000,
   });

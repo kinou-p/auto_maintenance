@@ -111,6 +111,7 @@ class Workflow(Base):
     steps_completed: list = Column(JSON, default=list, nullable=False)
     steps_failed: list = Column(JSON, default=list, nullable=False)
     logs: list = Column(JSON, default=list, nullable=False)
+    updates_stats: dict = Column(JSON, default=dict, nullable=False)
     started_at: Optional[datetime] = Column(DateTime, nullable=True)
     completed_at: Optional[datetime] = Column(DateTime, nullable=True)
     created_at: datetime = Column(

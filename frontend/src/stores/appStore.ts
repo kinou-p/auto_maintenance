@@ -77,7 +77,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCurrentProject: (project) => {
     // Charger les logs sauvegardés du projet sélectionné
     const logs = project ? getStoredLogs(project.id) : [];
-    set({ currentProject: project, logs });
+    set({
+      currentProject: project,
+      logs,
+      // Réinitialiser l'état du workflow/progression au changement de projet
+      currentWorkflow: null,
+      progress: 0,
+      currentStep: null,
+    });
   },
   updateProject: (project) =>
     set((state) => ({

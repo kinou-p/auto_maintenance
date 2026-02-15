@@ -103,11 +103,25 @@ async def get_vrt_report(project_id: int) -> VRTReportResponse:
             for r in reports
         ]
 
+        # Récupérer les stats d'update depuis le workflow associé (si dispo)
+        updates_stats = {"total": 0, "success": 0, "failed": 0}
+        
+        # On suppose que tous les items du rapport VRT viennent du même workflow
+        # On prend le workflow_id du premier item
+        if reports and reports[0].workflow_id:
+            from backend.models.database import Workflow
+            workflow = await session.get(Workflow, reports[0].workflow_id)
+            if workflow and workflow.updates_stats:
+                updates_stats = workflow.updates_stats
+
         return VRTReportResponse(
             project_id=project_id,
             total_pages=len(items),
             total_passed=sum(1 for i in items if i.passed),
             total_failed=sum(1 for i in items if not i.passed),
+            updates_total=updates_stats.get("total", 0),
+            updates_success=updates_stats.get("success", 0),
+            updates_failed=updates_stats.get("failed", 0),
             items=items,
         )
 

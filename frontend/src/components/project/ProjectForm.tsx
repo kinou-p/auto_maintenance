@@ -1,26 +1,54 @@
 /**
- * ProjectForm - Formulaire de création de projet.
+ * ProjectForm - Formulaire de création de projet (Redesigned).
  */
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/Card';
-import { createProject, createProjectsBatch } from '@/lib/api';
+import { createProject, createProjectsBatch, listWpressFiles, createProjectsFromLibrary } from '@/lib/api';
 import { useAppStore } from '@/stores/appStore';
 import { Upload, FolderPlus, Loader2, Files } from 'lucide-react';
 
 export function ProjectForm() {
-  const [mode, setMode] = useState<'single' | 'batch'>('single');
+  const [activeTab, setActiveTab] = useState<'new' | 'library'>('new');
+
+  // States pour "Nouveau" (Upload)
   const [name, setName] = useState('');
   const [domain, setDomain] = useState('');
-  const [wpress, setWpress] = useState<File | null>(null);
-  const [batchFiles, setBatchFiles] = useState<File[]>([]);
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+
+  // States pour "Bibliothèque"
+  const [libraryFiles, setLibraryFiles] = useState<{ path: string; name: string; size: number; created: number }[]>([]);
+  const [selectedLibraryFiles, setSelectedLibraryFiles] = useState<string[]>([]);
+  const [librarySearch, setLibrarySearch] = useState('');
+
+  // States globaux
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { setCurrentProject, setProjects, projects } = useAppStore();
+
+  // Charger la librairie au changement d'onglet
+  useEffect(() => {
+    if (activeTab === 'library') {
+      fetchLibraryFiles();
+    }
+  }, [activeTab]);
+
+  const fetchLibraryFiles = async () => {
+    setLoading(true);
+    try {
+      const files = await listWpressFiles();
+      setLibraryFiles(files);
+    } catch (err) {
+      console.error('Error fetching library files:', err);
+      setError('Impossible de charger les fichiers de la bibliothèque.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleNameChange = (value: string) => {
     setName(value);
@@ -29,299 +57,318 @@ export function ProjectForm() {
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadFilesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    if (mode === 'batch') {
-      // Mode batch : accepter plusieurs fichiers
-      const validFiles = Array.from(files).filter(f => f.name.endsWith('.wpress'));
-      if (validFiles.length !== files.length) {
-        setError('Tous les fichiers doivent être au format .wpress');
-        return;
-      }
-      setBatchFiles(validFiles);
-      setError('');
+    const newFiles = Array.from(files).filter(f => f.name.endsWith('.wpress'));
+    if (newFiles.length !== files.length) {
+      setError('Certains fichiers ont été ignorés car ils ne sont pas au format .wpress');
     } else {
-      // Mode simple : un seul fichier
-      const file = files[0];
-      if (!file) return;
-      
-      if (!file.name.endsWith('.wpress')) {
-        setError('Le fichier doit être au format .wpress');
-        return;
-      }
-      setWpress(file);
       setError('');
+    }
 
-      // Auto-détection du nom depuis le fichier
-      if (!name) {
-        const autoName = file.name
-          .replace('.wpress', '')
-          .replace(/[^a-zA-Z0-9_-]/g, '-')
-          .toLowerCase();
-        handleNameChange(autoName);
-      }
+    setUploadFiles(newFiles);
+
+    // Auto-fill name si un seul fichier
+    if (newFiles.length === 1 && !name) {
+      const autoName = newFiles[0].name
+        .replace('.wpress', '')
+        .replace(/[^a-zA-Z0-9_-]/g, '-')
+        .toLowerCase();
+      handleNameChange(autoName);
     }
   };
+
+  const handleLibrarySelection = (path: string) => {
+    setSelectedLibraryFiles(prev => {
+      if (prev.includes(path)) {
+        return prev.filter(p => p !== path);
+      } else {
+        return [...prev, path];
+      }
+    });
+  };
+
+  const handleSelectAllLibrary = () => {
+    if (selectedLibraryFiles.length === filteredLibraryFiles.length) {
+      setSelectedLibraryFiles([]);
+    } else {
+      setSelectedLibraryFiles(filteredLibraryFiles.map(f => f.path));
+    }
+  };
+
+  const filteredLibraryFiles = libraryFiles.filter(f =>
+    f.name.toLowerCase().includes(librarySearch.toLowerCase())
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
 
-    if (mode === 'batch') {
-      // Mode batch
-      if (batchFiles.length === 0) {
-        setError('Aucun fichier sélectionné.');
-        return;
-      }
+    try {
+      if (activeTab === 'new') {
+        // SCÉNARIO 1 : Upload
+        if (uploadFiles.length === 0) {
+          throw new Error("Veuillez sélectionner au moins un fichier .wpress");
+        }
 
-      setLoading(true);
-      try {
-        const result = await createProjectsBatch(batchFiles);
-        
-        // Ajouter les projets créés à la liste
-        if (result.created && result.created.length > 0) {
-          setProjects([...result.created, ...projects]);
-          if (result.created[0]) {
+        if (uploadFiles.length === 1) {
+          // Création simple
+          if (!name.trim()) throw new Error("Le nom du projet est requis.");
+          const project = await createProject(
+            name.trim(),
+            domain.trim() || undefined,
+            uploadFiles[0]
+          );
+          setCurrentProject(project);
+          setProjects([project, ...projects]);
+        } else {
+          // Création Batch (Upload)
+          const result = await createProjectsBatch(uploadFiles);
+          if (result.created.length > 0) {
+            setProjects([...result.created, ...projects]);
             setCurrentProject(result.created[0]);
+          }
+          if (result.errors.length > 0) {
+            const errorMsg = result.errors.map(e => `${e.file}: ${e.error}`).join('\n');
+            throw new Error(`${result.message}\n\nErreurs:\n${errorMsg}`);
           }
         }
 
-        // Afficher les erreurs s'il y en a
-        if (result.errors && result.errors.length > 0) {
-          const errorMsg = result.errors.map(e => `${e.file}: ${e.error}`).join('\n');
-          setError(`${result.message}\n\nErreurs:\n${errorMsg}`);
-        }
-
-        // Reset form si succès complet
-        if (!result.errors || result.errors.length === 0) {
-          setBatchFiles([]);
-          if (fileInputRef.current) fileInputRef.current.value = '';
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Erreur lors de la création batch');
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      // Mode simple
-      if (!name.trim()) {
-        setError('Le nom du projet est requis.');
-        return;
-      }
-
-      if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-        setError('Le nom ne peut contenir que des lettres, chiffres, tirets et underscores.');
-        return;
-      }
-
-      setLoading(true);
-      try {
-        const project = await createProject(
-          name.trim(),
-          domain.trim() || undefined,
-          wpress || undefined,
-        );
-
-        setCurrentProject(project);
-        setProjects([project, ...projects]);
-
-        // Reset form
+        // Reset
+        setUploadFiles([]);
         setName('');
         setDomain('');
-        setWpress(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Erreur lors de la création');
-      } finally {
-        setLoading(false);
+
+      } else {
+        // SCÉNARIO 2 : Librairie
+        if (selectedLibraryFiles.length === 0) {
+          throw new Error("Veuillez sélectionner au moins un fichier dans la bibliothèque.");
+        }
+
+        const result = await createProjectsFromLibrary(selectedLibraryFiles);
+        if (result.created.length > 0) {
+          setProjects([...result.created, ...projects]);
+          setCurrentProject(result.created[0]);
+        }
+        if (result.errors.length > 0) {
+          const errorMsg = result.errors.map(e => `${e.file}: ${e.error}`).join('\n');
+          throw new Error(`${result.message}\n\nErreurs:\n${errorMsg}`);
+        }
+
+        setSelectedLibraryFiles([]);
       }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Une erreur est survenue');
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <Card className="w-full max-w-lg">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-lg">
-          <FolderPlus className="h-5 w-5" />
+    <Card className="w-full max-w-lg border-none shadow-lg bg-card/50 backdrop-blur-sm">
+      <CardHeader className="pb-4">
+        <CardTitle className="flex items-center gap-2 text-xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+          <FolderPlus className="h-6 w-6 text-primary" />
           Nouveau Projet
         </CardTitle>
-        <div className="flex gap-2 mt-3">
-          <Button
-            type="button"
-            variant={mode === 'single' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => {
-              setMode('single');
-              setBatchFiles([]);
-              setError('');
-            }}
-          >
-            Simple
-          </Button>
-          <Button
-            type="button"
-            variant={mode === 'batch' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => {
-              setMode('batch');
-              setWpress(null);
-              setName('');
-              setDomain('');
-              setError('');
-            }}
-          >
-            <Files className="h-4 w-4 mr-1" />
-            Batch
-          </Button>
-        </div>
         <CardDescription>
-          {mode === 'single' 
-            ? 'Créez un nouveau projet de maintenance WordPress'
-            : 'Créez plusieurs projets en une fois à partir de fichiers .wpress'}
+          Ajoutez des projets WordPress à votre environnement.
         </CardDescription>
+
+        {/* Custom Tabs */}
+        <div className="flex p-1 mt-4 bg-muted/50 rounded-lg">
+          <button
+            type="button"
+            className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${activeTab === 'new' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            onClick={() => setActiveTab('new')}
+          >
+            Importer (.wpress)
+          </button>
+          <button
+            type="button"
+            className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${activeTab === 'library' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            onClick={() => setActiveTab('library')}
+          >
+            Bibliothèque
+          </button>
+        </div>
       </CardHeader>
 
       <form onSubmit={handleSubmit}>
-        <CardContent className="space-y-4">
-          {mode === 'single' ? (
-            <>
-              {/* Nom du projet */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium" htmlFor="project-name">
-                  Nom du projet
-                </label>
-                <Input
-                  id="project-name"
-                  placeholder="mon-site-wordpress"
-                  value={name}
-                  onChange={(e) => handleNameChange(e.target.value)}
+        <CardContent className="min-h-[300px] space-y-4">
+
+          {/* ONGLET 1 : NOUVEAU (UPLOAD) */}
+          {activeTab === 'new' && (
+            <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div
+                className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all duration-200 ${uploadFiles.length > 0 ? 'border-primary/50 bg-primary/5' : 'border-border hover:border-primary/30 hover:bg-accent/50'}`}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".wpress"
+                  multiple
+                  onChange={handleUploadFilesChange}
+                  className="hidden"
                   disabled={loading}
                 />
+
+                {uploadFiles.length > 0 ? (
+                  <div className="space-y-2">
+                    <Files className="h-10 w-10 mx-auto text-primary" />
+                    <div className="text-sm font-medium">
+                      {uploadFiles.length} fichier(s) sélectionné(s)
+                    </div>
+                    <p className="text-xs text-muted-foreground">Cliquez pour changer</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Upload className="h-10 w-10 mx-auto text-muted-foreground/50" />
+                    <p className="text-sm font-medium text-foreground">
+                      Cliquez ou glissez vos fichiers .wpress
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Jusqu'à 500Mo par fichier
+                    </p>
+                  </div>
+                )}
               </div>
 
-              {/* Domaine */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium" htmlFor="project-domain">
-                  Domaine local
-                </label>
-                <Input
-                  id="project-domain"
-                  placeholder="monsite.ddev.site"
-                  value={domain}
-                  onChange={(e) => setDomain(e.target.value)}
-                  disabled={loading}
-                />
-              </div>
-
-              {/* Upload .wpress */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium">
-                  Fichier de sauvegarde (.wpress)
-                </label>
-                <div
-                  className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".wpress"
-                    onChange={handleFileChange}
-                    className="hidden"
-                    disabled={loading}
-                  />
-                  {wpress ? (
-                    <div className="space-y-1">
-                      <Upload className="h-8 w-8 mx-auto text-primary" />
-                      <p className="text-sm font-medium">{wpress.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {(wpress.size / 1024 / 1024).toFixed(1)} Mo
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      <Upload className="h-8 w-8 mx-auto text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground">
-                        Cliquez ou glissez votre fichier .wpress ici
-                      </p>
-                    </div>
-                  )}
+              {/* Formulaire si 1 seul fichier */}
+              {uploadFiles.length === 1 && (
+                <div className="space-y-3 pt-2">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Nom du projet</label>
+                    <Input
+                      value={name}
+                      onChange={(e) => handleNameChange(e.target.value)}
+                      placeholder="mon-super-projet"
+                      className="bg-background/50"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Domaine local</label>
+                    <Input
+                      value={domain}
+                      onChange={(e) => setDomain(e.target.value)}
+                      placeholder="projet.ddev.site"
+                      className="bg-background/50"
+                    />
+                  </div>
                 </div>
+              )}
+
+              {/* Liste si plusieurs fichiers */}
+              {uploadFiles.length > 1 && (
+                <div className="bg-accent/30 rounded-lg p-3 max-h-40 overflow-y-auto space-y-2">
+                  {uploadFiles.map((f, i) => (
+                    <div key={i} className="flex justify-between text-xs items-center">
+                      <span className="truncate max-w-[200px]">{f.name}</span>
+                      <span className="text-muted-foreground">{(f.size / 1024 / 1024).toFixed(1)} Mo</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ONGLET 2 : BIBLIOTHEQUE */}
+          {activeTab === 'library' && (
+            <div className="space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-300 h-full flex flex-col">
+              {/* Recherche et Filtres */}
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Rechercher..."
+                  value={librarySearch}
+                  onChange={(e) => setLibrarySearch(e.target.value)}
+                  className="h-9 text-sm"
+                />
               </div>
-            </>
-          ) : (
-            <>
-              {/* Upload multiple .wpress */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium">
-                  Fichiers de sauvegarde (.wpress)
-                </label>
-                <div
-                  className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".wpress"
-                    multiple
-                    onChange={handleFileChange}
-                    className="hidden"
-                    disabled={loading}
-                  />
-                  {batchFiles.length > 0 ? (
-                    <div className="space-y-2">
-                      <Files className="h-8 w-8 mx-auto text-primary" />
-                      <p className="text-sm font-medium">{batchFiles.length} fichier(s) sélectionné(s)</p>
-                      <div className="max-h-32 overflow-y-auto text-xs text-muted-foreground space-y-1">
-                        {batchFiles.map((f, idx) => (
-                          <div key={idx}>
-                            {f.name} ({(f.size / 1024 / 1024).toFixed(1)} Mo)
+
+              {/* Liste des fichiers */}
+              <div className="border rounded-md flex-1 overflow-hidden flex flex-col max-h-[250px] min-h-[200px]">
+                <div className="bg-muted/30 p-2 text-xs font-medium text-muted-foreground flex justify-between items-center border-b">
+                  <span>{filteredLibraryFiles.length} fichiers trouvés</span>
+                  <button
+                    type="button"
+                    onClick={handleSelectAllLibrary}
+                    className="text-primary hover:underline"
+                  >
+                    {selectedLibraryFiles.length === filteredLibraryFiles.length ? 'Tout désélectionner' : 'Tout sélectionner'}
+                  </button>
+                </div>
+
+                <div className="overflow-y-auto p-1 space-y-1 flex-1">
+                  {filteredLibraryFiles.map((file) => {
+                    const isSelected = selectedLibraryFiles.includes(file.path);
+                    return (
+                      <div
+                        key={file.path}
+                        onClick={() => handleLibrarySelection(file.path)}
+                        className={`flex items-center gap-3 p-2 rounded-md cursor-pointer text-sm transition-colors ${isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-accent'}`}
+                      >
+                        <div className={`h-4 w-4 rounded border flex items-center justify-center ${isSelected ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground'}`}>
+                          {isSelected && <div className="h-2 w-2 bg-current rounded-sm" />}
+                        </div>
+                        <div className="flex-1 truncate">
+                          <div className="font-medium truncate">{file.name}</div>
+                          <div className="text-xs text-muted-foreground flex justify-between mt-0.5">
+                            <span>{(file.size / 1024 / 1024).toFixed(1)} Mo</span>
+                            <span>{new Date(file.created * 1000).toLocaleDateString()}</span>
                           </div>
-                        ))}
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      <Files className="h-8 w-8 mx-auto text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground">
-                        Cliquez ou glissez vos fichiers .wpress ici
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Les noms de projet seront générés automatiquement
-                      </p>
+                    );
+                  })}
+                  {filteredLibraryFiles.length === 0 && (
+                    <div className="p-8 text-center text-muted-foreground text-sm">
+                      Aucun fichier trouvé.
                     </div>
                   )}
                 </div>
               </div>
-            </>
+
+              {selectedLibraryFiles.length > 0 && (
+                <div className="text-xs text-right text-muted-foreground">
+                  {selectedLibraryFiles.length} fichier(s) sélectionné(s)
+                </div>
+              )}
+            </div>
           )}
 
-          {/* Erreur */}
+          {/* Erreur globale */}
           {error && (
-            <p className="text-sm text-destructive whitespace-pre-line">{error}</p>
+            <div className="p-3 text-sm text-destructive bg-destructive/10 rounded-md whitespace-pre-line animate-in fade-in zoom-in-95 duration-200">
+              {error}
+            </div>
           )}
+
         </CardContent>
 
-        <CardFooter>
-          <Button 
-            type="submit" 
+        <CardFooter className="pt-2">
+          <Button
+            type="submit"
             disabled={
-              loading || 
-              (mode === 'single' && !name.trim()) ||
-              (mode === 'batch' && batchFiles.length === 0)
-            } 
-            className="w-full"
+              loading ||
+              (activeTab === 'new' && uploadFiles.length === 0) ||
+              (activeTab === 'library' && selectedLibraryFiles.length === 0)
+            }
+            className="w-full shadow-md font-semibold"
           >
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                {mode === 'batch' ? 'Création des projets...' : 'Création en cours...'}
+                Traitement en cours...
               </>
             ) : (
-              mode === 'batch' ? `Créer ${batchFiles.length} projet(s)` : 'Créer le projet'
+              activeTab === 'new'
+                ? (uploadFiles.length > 1 ? `Importer ${uploadFiles.length} projets` : 'Créer le projet')
+                : `Créer ${selectedLibraryFiles.length} projet(s)`
             )}
           </Button>
         </CardFooter>

@@ -10,10 +10,13 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
+from backend.core.config import settings
+from backend.core.websocket import ws_manager
 from backend.managers.workflow_orchestrator import (
     WorkflowOrchestrator,
     get_active_workflow,
 )
+from backend.managers.queue_manager import queue_manager
 from backend.models.database import (
     Project,
     Workflow,
@@ -33,9 +36,9 @@ router = APIRouter(prefix="/workflows", tags=["workflows"])
 async def start_workflow(request: WorkflowStart) -> WorkflowResponse:
     """
     Démarre un nouveau workflow de maintenance.
-
-    Le workflow s'exécute en arrière-plan et envoie les logs
-    en temps réel via WebSocket.
+    
+    Le workflow est ajouté à la file d'attente et s'exécutera
+    dès que les ressources seront disponibles.
     """
     # Vérifier que le projet existe
     async with async_session() as session:
@@ -43,20 +46,22 @@ async def start_workflow(request: WorkflowStart) -> WorkflowResponse:
         if not project:
             raise HTTPException(404, f"Projet {request.project_id} introuvable.")
 
-        # Vérifier qu'il n'y a pas de workflow en cours
+        # Vérifier qu'il n'y a pas de workflow en cours ou en attente pour ce projet précis
+        # (Optionnel : on pourrait autoriser plusieurs en file, mais simplifions)
         running = await session.execute(
             select(Workflow).where(
                 Workflow.project_id == request.project_id,
-                Workflow.status == WorkflowStatus.RUNNING,
+                Workflow.status.in_([WorkflowStatus.RUNNING, WorkflowStatus.PENDING]),
             )
         )
         if running.scalar_one_or_none():
-            raise HTTPException(409, "Un workflow est déjà en cours pour ce projet.")
+            raise HTTPException(409, "Un workflow est déjà en cours ou en attente pour ce projet.")
 
         # Créer le workflow en DB
         workflow = Workflow(
             project_id=request.project_id,
             status=WorkflowStatus.PENDING,
+            # TODO: Stocker steps et selected_updates dans la DB pour que le QueueManager puisse les utiliser
         )
         session.add(workflow)
         await session.commit()
@@ -64,29 +69,55 @@ async def start_workflow(request: WorkflowStart) -> WorkflowResponse:
 
         workflow_id = workflow.id
 
-    # Préparer les mises à jour sélectionnées
-    selected_updates = {}
-    if request.selected_updates:
-        selected_updates = {
-            "update_core": True,
-            "plugin_names": request.selected_updates,
-            "theme_names": [],
-        }
-
-    # Lancer le workflow en arrière-plan
-    orchestrator = WorkflowOrchestrator(
-        project_id=request.project_id,
-        workflow_id=workflow_id,
-        steps=request.steps,
-        selected_updates=selected_updates,
-    )
-
-    asyncio.create_task(orchestrator.run())
+    # Ajouter à la file d'attente
+    await queue_manager.add_to_queue(workflow_id)
 
     # Retourner immédiatement
     async with async_session() as session:
         workflow = await session.get(Workflow, workflow_id)
         return WorkflowResponse.model_validate(workflow)
+
+
+@router.post("/batch", response_model=list[WorkflowResponse], status_code=201)
+async def start_workflows_batch(project_ids: list[int]) -> list[WorkflowResponse]:
+    """
+    Démarre des workflows pour plusieurs projets (batch).
+    """
+    created_workflows = []
+    
+    async with async_session() as session:
+        for pid in project_ids:
+            # Vérifier existence projet et absence de workflow en cours
+            project = await session.get(Project, pid)
+            if not project:
+                continue
+                
+            running = await session.execute(
+                select(Workflow).where(
+                    Workflow.project_id == pid,
+                    Workflow.status.in_([WorkflowStatus.RUNNING, WorkflowStatus.PENDING]),
+                )
+            )
+            if running.scalar_one_or_none():
+                continue
+            
+            # Créer le workflow
+            workflow = Workflow(
+                project_id=pid,
+                status=WorkflowStatus.PENDING,
+            )
+            session.add(workflow)
+            await session.flush() # Pour avoir l'ID
+            await session.refresh(workflow)
+            
+            created_workflows.append(WorkflowResponse.model_validate(workflow))
+            
+            # Ajouter à la queue (ceci ne bloque pas)
+            await queue_manager.add_to_queue(workflow.id)
+        
+        await session.commit()
+        
+    return created_workflows
 
 
 @router.get("/{workflow_id}", response_model=WorkflowResponse)
@@ -114,12 +145,12 @@ async def list_project_workflows(project_id: int) -> list[WorkflowResponse]:
 
 @router.get("/project/{project_id}/active", response_model=Optional[WorkflowResponse])
 async def get_active_workflow_for_project(project_id: int) -> Optional[WorkflowResponse]:
-    """Récupère le workflow actif (RUNNING) d'un projet s'il existe."""
+    """Récupère le workflow actif (RUNNING ou PENDING) d'un projet s'il existe."""
     async with async_session() as session:
         result = await session.execute(
             select(Workflow).where(
                 Workflow.project_id == project_id,
-                Workflow.status == WorkflowStatus.RUNNING,
+                Workflow.status.in_([WorkflowStatus.RUNNING, WorkflowStatus.PENDING]),
             )
         )
         workflow = result.scalar_one_or_none()
@@ -130,13 +161,23 @@ async def get_active_workflow_for_project(project_id: int) -> Optional[WorkflowR
 
 @router.post("/{workflow_id}/cancel", response_model=StatusResponse)
 async def cancel_workflow(workflow_id: int) -> StatusResponse:
-    """Annule un workflow en cours d'exécution."""
+    """Annule un workflow en cours d'exécution ou en attente."""
+    # 1. Vérifier si c'est celui qui tourne
     orchestrator = get_active_workflow(workflow_id)
-    if not orchestrator:
-        raise HTTPException(404, "Aucun workflow actif avec cet ID.")
+    if orchestrator:
+        orchestrator.cancel()
+        return StatusResponse(status="success", message="Demande d'annulation envoyée pour le workflow en cours.")
 
-    orchestrator.cancel()
-    return StatusResponse(status="success", message="Demande d'annulation envoyée.")
+    # 2. Sinon, vérifier s'il est en attente dans la DB et le marquer CANCELLED
+    async with async_session() as session:
+        workflow = await session.get(Workflow, workflow_id)
+        if workflow and workflow.status == WorkflowStatus.PENDING:
+            workflow.status = WorkflowStatus.CANCELLED
+            workflow.completed_at = datetime.now(timezone.utc)
+            await session.commit()
+            return StatusResponse(status="success", message="Workflow en attente annulé.")
+            
+    raise HTTPException(404, "Aucun workflow actif ou en attente avec cet ID.")
 
 
 @router.get("/{workflow_id}/logs")
