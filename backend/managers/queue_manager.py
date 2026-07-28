@@ -14,7 +14,7 @@ from typing import Optional
 
 from sqlalchemy import select, update
 from backend.core.config import settings
-from backend.models.database import Workflow, WorkflowStatus, async_session
+from backend.models.database import Project, ProjectStatus, Workflow, WorkflowStatus, async_session
 from backend.managers.workflow_orchestrator import WorkflowOrchestrator, get_active_workflow
 from backend.core.websocket import ws_manager
 
@@ -48,8 +48,12 @@ class WorkflowQueueManager:
         await ws_manager.broadcast({"type": "queue_updated"})
         asyncio.create_task(self.process_queue())
 
-    async def _cleanup_zombies(self) -> None:
-        """Marque FAILED les workflows RUNNING sans tâche active en mémoire."""
+    async def _recover_interrupted_workflows(self) -> None:
+        """
+        Détecte les workflows interrompus (statut RUNNING sans tâche active en mémoire)
+        lors d'un redémarrage du serveur et les remet automatiquement en PENDING
+        pour qu'ils reprennent l'exécution.
+        """
         async with async_session() as session:
             running_res = await session.execute(
                 select(Workflow).where(Workflow.status == WorkflowStatus.RUNNING)
@@ -59,12 +63,15 @@ class WorkflowQueueManager:
             for wf_item in running_list:
                 has_task = wf_item.id in self._active_tasks and not self._active_tasks[wf_item.id].done()
                 if get_active_workflow(wf_item.id) is None and not has_task:
-                    logger.warning(
-                        f"Workflow {wf_item.id} détecté Zombie (statut RUNNING sans tâche active). Marquage FAILED."
+                    logger.info(
+                        f"Workflow {wf_item.id} (Projet {wf_item.project_id}) interrompu au redémarrage. "
+                        f"Remise en file d'attente (PENDING) pour reprise automatique."
                     )
-                    wf_item.status = WorkflowStatus.FAILED
-                    wf_item.error_message = "Arrêt inattendu (Zombie détecté)"
-                    wf_item.completed_at = datetime.now(timezone.utc)
+                    wf_item.status = WorkflowStatus.PENDING
+                    wf_item.current_step = None
+                    project = await session.get(Project, wf_item.project_id)
+                    if project:
+                        project.status = ProjectStatus.PENDING
                     changed = True
             if changed:
                 await session.commit()
@@ -122,7 +129,7 @@ class WorkflowQueueManager:
             return
 
         async with self._process_lock:
-            await self._cleanup_zombies()
+            await self._recover_interrupted_workflows()
 
             while True:
                 # Nettoyer les tâches terminées
