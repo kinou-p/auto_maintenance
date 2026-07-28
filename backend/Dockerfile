@@ -35,6 +35,8 @@ RUN chown -R pwuser:pwuser /app
 
 USER pwuser
 
+RUN ddev config global --docker-buildx-version=0.35.0
+
 EXPOSE 8000
 
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
