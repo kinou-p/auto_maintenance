@@ -1034,7 +1034,7 @@ class WordPressManager:
             import json
             try:
                 all_pages = json.loads(page_result.stdout)
-                for pg in all_pages:
+                for pg in all_pages[:10]:
                     url_result = await run_wp_cli(
                         f"post get {pg['ID']} --field=url", str(self.project_dir)
                     )
@@ -1043,6 +1043,7 @@ class WordPressManager:
                     pages.append({"url": url, "name": name, "type": "page"})
             except (json.JSONDecodeError, KeyError):
                 pass
+
 
         # Récupérer les articles publiés (limité à 10 max)
         posts_result = await run_wp_cli(
