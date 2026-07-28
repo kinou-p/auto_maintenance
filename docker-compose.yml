@@ -14,6 +14,7 @@ services:
       - ~/ddev-projects:/root/ddev-projects
     environment:
       - PYTHONUNBUFFERED=1
+      - DDEV_ALLOW_ROOT=true
 
   frontend:
     build:
