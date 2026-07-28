@@ -1,8 +1,8 @@
-FROM python:3.11-slim
+FROM mcr.microsoft.com/playwright/python:v1.49.1-jammy
 
 WORKDIR /app
 
-# Dépendances système
+# Dépendances système supplémentaires si besoin
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
@@ -15,9 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
-
-# Installer Playwright Chromium et ses dépendances système
-RUN playwright install --with-deps chromium
 
 # Copier le code backend
 COPY backend/ ./backend/
