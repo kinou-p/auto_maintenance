@@ -232,7 +232,7 @@ export function Dashboard() {
       setCurrentWorkflow(workflow);
       fetchQueueInfo();
 
-      if (workflow.status === 'pending') {
+      if (workflow.status === 'pending' && (queueInfo?.total_active ?? 0) > 0) {
         setNotification({
           type: 'info',
           message: `⏰ Maintenance ajoutée à la file d'attente pour "${currentProject.name}". Elle s'exécutera automatiquement à la suite du workflow en cours.`,
@@ -243,6 +243,7 @@ export function Dashboard() {
           message: `🚀 Maintenance lancée immédiatement pour "${currentProject.name}".`,
         });
       }
+
     } catch (err: any) {
       console.error('Erreur workflow:', err);
       const errMsg = err.message || 'Impossible de lancer la maintenance.';
@@ -265,7 +266,7 @@ export function Dashboard() {
       setCurrentWorkflow(workflow);
       fetchQueueInfo();
 
-      if (workflow.status === 'pending') {
+      if (workflow.status === 'pending' && (queueInfo?.total_active ?? 0) > 0) {
         setNotification({
           type: 'info',
           message: `⏰ Importation sans maintenance ajoutée à la file pour "${currentProject.name}".`,
@@ -273,9 +274,10 @@ export function Dashboard() {
       } else {
         setNotification({
           type: 'success',
-          message: `🚀 Lancement & Importation (sans maintenance) lancés pour "${currentProject.name}".`,
+          message: `🚀 Lancement & Importation (sans maintenance) pour "${currentProject.name}".`,
         });
       }
+
     } catch (err: any) {
       console.error('Erreur workflow:', err);
       const errMsg = err.message || 'Impossible de lancer l\'importation.';
