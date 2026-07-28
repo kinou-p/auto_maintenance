@@ -659,6 +659,11 @@ class WordPressManager:
                         await self._log("warning", f"⚠️ Extension '{p_name}' désactivée (incompatible PHP 8+ / Fatal Error).", step="wpress_import")
                 await self._log("info", f"Activation individuelle terminée : {activated_count} activée(s), {failed_count} ignorée(s).", step="wpress_import")
 
+        # Re-désactiver les plugins de redirection SSL / masquage d'admin activés par --all
+        await run_wp_cli(deact_cmd, str(self.project_dir))
+        # Désactiver les options/transients SSL de Really Simple SSL si présents
+        await run_wp_cli("option update rsl_ssl_enabled 0", str(self.project_dir))
+
 
 
 

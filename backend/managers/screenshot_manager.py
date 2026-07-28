@@ -97,6 +97,7 @@ class ScreenshotManager:
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
+                    "--host-resolver-rules=MAP *.ddev.site 172.17.0.1, MAP *.ddev.site:8443 172.17.0.1:8443",
                 ],
             )
         return self._browser
@@ -272,27 +273,6 @@ class ScreenshotManager:
 
 
         context = await browser.new_context(**context_opts)
-
-        # Rerouter les requêtes *.ddev.site vers host.docker.internal (l'hôte Docker)
-        # pour éviter que Playwright ne tente de contacter localhost/127.0.0.1 du conteneur backend
-        async def _route_ddev(route, request):
-            req_url = request.url
-            parsed = urlparse(req_url)
-            if ".ddev.site" in parsed.netloc:
-                # Remplacer la partie hôte par host.docker.internal
-                # Ex: http://project.ddev.site:8088/path -> http://host.docker.internal:8088/path
-                new_netloc = parsed.netloc.replace(parsed.hostname or "", "host.docker.internal")
-                new_url = parsed._replace(netloc=new_netloc).geturl()
-                headers = {**request.headers, "host": parsed.netloc}
-                try:
-                    await route.continue_(url=new_url, headers=headers)
-                except Exception:
-                    await route.continue_()
-            else:
-                await route.continue_()
-
-        await context.route("**/*", _route_ddev)
-
         page = await context.new_page()
 
         try:
