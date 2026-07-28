@@ -26,6 +26,7 @@ describe('useAppStore', () => {
       name: 'test-project',
       domain: 'test-project.ddev.site',
       status: 'ready',
+      wpress_file: null,
       created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-01T00:00:00Z',
     };
@@ -39,15 +40,20 @@ describe('useAppStore', () => {
 
   it('adds log messages and updates state', () => {
     const dummyLog: LogMessage = {
+      type: 'log',
       timestamp: '2026-01-01T00:00:00Z',
       level: 'info',
       step: 'test_step',
       message: 'Test log message',
+      details: null,
+      progress: null,
+      project_id: 1,
+      workflow_id: 1,
     };
 
     useAppStore.getState().addLog(dummyLog);
     expect(useAppStore.getState().logs).toHaveLength(1);
-    expect(useAppStore.getState().logs[0].message).toBe('Test log message');
+    expect(useAppStore.getState().logs[0]?.message).toBe('Test log message');
   });
 
   it('toggles sidebar state', () => {
