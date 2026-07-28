@@ -13,25 +13,29 @@ import {
   getActiveWorkflow,
   resetDDEVGlobal,
   startProject,
+  pauseProject,
   stopProject,
   restartProject,
   recreateProject,
   getProjectStatus,
+  getProjects,
+  getWorkflowQueue,
 } from '@/lib/api';
 import { ProjectForm } from '@/components/project/ProjectForm';
 import { ProjectList } from '@/components/project/ProjectList';
 import { LogViewer } from '@/components/dashboard/LogViewer';
 import { WorkflowProgress } from '@/components/dashboard/WorkflowProgress';
+import { QueueModal } from '@/components/dashboard/QueueModal';
+
 import { ImageComparer } from '@/components/vrt/ImageComparer';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/utils';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
-  Plus,
-  Trash2,
   Play,
+  Pause,
   Square,
   Wrench,
   RotateCcw,
@@ -44,19 +48,45 @@ import {
   Globe,
   FileText,
   ImageIcon,
-  Search,
   StopCircle,
   Hammer,
+  Clock,
 } from 'lucide-react';
+
+
 import type { VRTReport } from '@/types';
 
 export function Dashboard() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
+    projects,
     currentProject,
+    setCurrentProject,
     currentWorkflow,
     setCurrentWorkflow,
     clearLogs,
+    setProjects,
   } = useAppStore();
+
+  // Restaurer le projet depuis l'URL (ex: ?project=3) au chargement
+  useEffect(() => {
+    const projectIdParam = searchParams.get('project');
+    if (projectIdParam && projects.length > 0 && (!currentProject || currentProject.id !== parseInt(projectIdParam, 10))) {
+      const found = projects.find(p => p.id === parseInt(projectIdParam, 10));
+      if (found) {
+        setCurrentProject(found);
+      }
+    }
+  }, [projects, searchParams]);
+
+  // Mettre à jour l'URL lorsque le projet courant change
+  useEffect(() => {
+    if (currentProject) {
+      if (searchParams.get('project') !== String(currentProject.id)) {
+        setSearchParams({ project: String(currentProject.id) }, { replace: true });
+      }
+    }
+  }, [currentProject?.id]);
 
   const [vrtReport, setVrtReport] = useState<VRTReport | null>(null);
   const [health, setHealth] = useState<{ ddev: boolean; docker: boolean } | null>(null);
@@ -173,6 +203,25 @@ export function Dashboard() {
     return () => clearInterval(interval);
   }, [currentProject, setCurrentWorkflow]);
 
+  const [queueInfo, setQueueInfo] = useState<{ total_active: number; total_pending: number } | null>(null);
+  const [showQueueModal, setShowQueueModal] = useState(false);
+  const [notification, setNotification] = useState<{ type: 'success' | 'info' | 'warning' | 'error'; message: string } | null>(null);
+
+  const fetchQueueInfo = useCallback(async () => {
+    try {
+      const q = await getWorkflowQueue();
+      setQueueInfo({ total_active: q.total_active, total_pending: q.total_pending });
+    } catch {
+      // silent fail
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchQueueInfo();
+    const interval = setInterval(fetchQueueInfo, 4000);
+    return () => clearInterval(interval);
+  }, [fetchQueueInfo]);
+
   const handleStartWorkflow = async () => {
     if (!currentProject) return;
     setWorkflowLoading(true);
@@ -181,10 +230,77 @@ export function Dashboard() {
     try {
       const workflow = await startWorkflow(currentProject.id);
       setCurrentWorkflow(workflow);
-    } catch (err) {
+      fetchQueueInfo();
+
+      if (workflow.status === 'pending') {
+        setNotification({
+          type: 'info',
+          message: `⏰ Maintenance ajoutée à la file d'attente pour "${currentProject.name}". Elle s'exécutera automatiquement à la suite du workflow en cours.`,
+        });
+      } else {
+        setNotification({
+          type: 'success',
+          message: `🚀 Maintenance lancée immédiatement pour "${currentProject.name}".`,
+        });
+      }
+    } catch (err: any) {
       console.error('Erreur workflow:', err);
+      const errMsg = err.message || 'Impossible de lancer la maintenance.';
+      setNotification({
+        type: 'warning',
+        message: errMsg,
+      });
     } finally {
       setWorkflowLoading(false);
+    }
+  };
+
+  const handleStartImportOnlyWorkflow = async () => {
+    if (!currentProject) return;
+    setWorkflowLoading(true);
+    clearLogs();
+
+    try {
+      const workflow = await startWorkflow(currentProject.id, undefined, undefined, true);
+      setCurrentWorkflow(workflow);
+      fetchQueueInfo();
+
+      if (workflow.status === 'pending') {
+        setNotification({
+          type: 'info',
+          message: `⏰ Importation sans maintenance ajoutée à la file pour "${currentProject.name}".`,
+        });
+      } else {
+        setNotification({
+          type: 'success',
+          message: `🚀 Lancement & Importation (sans maintenance) lancés pour "${currentProject.name}".`,
+        });
+      }
+    } catch (err: any) {
+      console.error('Erreur workflow:', err);
+      const errMsg = err.message || 'Impossible de lancer l\'importation.';
+      setNotification({
+        type: 'warning',
+        message: errMsg,
+      });
+    } finally {
+      setWorkflowLoading(false);
+    }
+  };
+
+
+
+  const refreshProjectState = async () => {
+    if (!currentProject) return;
+    try {
+      const statusRes = await getProjectStatus(currentProject.id);
+      const ddevData = statusRes.ddev.data as any;
+      const rawStatus = ddevData?.raw?.status || (statusRes.ddev.status as string) || (statusRes.ddev.running ? 'running' : 'stopped');
+      setDdevStatus(rawStatus);
+      const allProjects = await getProjects();
+      setProjects(allProjects.projects);
+    } catch (err) {
+      console.error('Error refreshing project status:', err);
     }
   };
 
@@ -193,11 +309,22 @@ export function Dashboard() {
     setWorkflowLoading(true);
     try {
       await startProject(currentProject.id);
-      // Refresh project to update status (via store or local fetch if needed)
-      // For now, the WebSocket or a poll might update it, 
-      // but let's assume the user will see the status change.
+      await refreshProjectState();
     } catch (err) {
       console.error('Error starting project:', err);
+    } finally {
+      setWorkflowLoading(false);
+    }
+  };
+
+  const handlePauseProject = async () => {
+    if (!currentProject) return;
+    setWorkflowLoading(true);
+    try {
+      await pauseProject(currentProject.id);
+      await refreshProjectState();
+    } catch (err) {
+      console.error('Error pausing project:', err);
     } finally {
       setWorkflowLoading(false);
     }
@@ -208,6 +335,7 @@ export function Dashboard() {
     setWorkflowLoading(true);
     try {
       await stopProject(currentProject.id);
+      await refreshProjectState();
     } catch (err) {
       console.error('Error stopping project:', err);
     } finally {
@@ -220,6 +348,7 @@ export function Dashboard() {
     setWorkflowLoading(true);
     try {
       await restartProject(currentProject.id);
+      await refreshProjectState();
     } catch (err) {
       console.error('Error restarting project:', err);
     } finally {
@@ -235,6 +364,7 @@ export function Dashboard() {
     setWorkflowLoading(true);
     try {
       await recreateProject(currentProject.id);
+      await refreshProjectState();
     } catch (err) {
       console.error('Error recreating project:', err);
     } finally {
@@ -410,22 +540,23 @@ export function Dashboard() {
                         <Button
                           variant="outline"
                           size="sm"
+                          onClick={handlePauseProject}
+                          disabled={workflowLoading || ddevStatus === 'paused' || ddevStatus === 'stopped' || ddevStatus === 'unknown'}
+                          className="text-amber-600 border-amber-200 hover:bg-amber-50"
+                        >
+                          <Pause className="mr-2 h-4 w-4" />
+                          Pause
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
                           onClick={handleStopProject}
                           disabled={workflowLoading || ddevStatus === 'stopped' || ddevStatus === 'unknown'}
                           className="text-orange-600 border-orange-200 hover:bg-orange-50"
                         >
                           <Square className="mr-2 h-4 w-4" />
                           Arrêter
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleStartProject}
-                          disabled={workflowLoading || ddevStatus === 'running'}
-                          className="text-green-600 border-green-200 hover:bg-green-50"
-                        >
-                          <Play className="mr-2 h-4 w-4" />
-                          Démarrer
                         </Button>
 
                         <Button
@@ -453,6 +584,33 @@ export function Dashboard() {
                         <div className="h-6 w-px bg-border mx-1" />
 
                         <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowQueueModal(true)}
+                          className="text-amber-600 border-amber-500/30 hover:bg-amber-500/10 dark:text-amber-400"
+                        >
+                          <Clock className="mr-2 h-4 w-4" />
+                          File d'attente
+                          {queueInfo && (queueInfo.total_active > 0 || queueInfo.total_pending > 0) && (
+                            <Badge variant="secondary" className="ml-1.5 px-1.5 py-0 text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-300">
+                              {queueInfo.total_active + queueInfo.total_pending}
+                            </Badge>
+                          )}
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleStartImportOnlyWorkflow}
+                          disabled={workflowLoading || currentProject.status === 'stopped'}
+                          title="Lancer le projet et importer le site .wpress sans faire de maintenance"
+                          className="border-primary/30 text-primary hover:bg-primary/10"
+                        >
+                          <Wrench className="mr-2 h-4 w-4" />
+                          Lancer & Importer seulement
+                        </Button>
+
+                        <Button
                           size="sm"
                           onClick={handleStartWorkflow}
                           disabled={workflowLoading || currentProject.status === 'stopped'}
@@ -460,11 +618,40 @@ export function Dashboard() {
                           <Play className="mr-2 h-4 w-4" />
                           Lancer la maintenance
                         </Button>
+
                       </div>
                     )}
                   </div>
                 </div>
               </div>
+
+              {/* Banner de notification / Feedback file d'attente */}
+              {notification && (
+                <div
+                  className={cn(
+                    "mx-6 mt-4 p-4 rounded-xl flex items-center justify-between border shadow-sm transition-all animate-in fade-in duration-200",
+                    notification.type === 'success' && "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400",
+                    notification.type === 'info' && "bg-blue-500/10 border-blue-500/30 text-blue-600 dark:text-blue-400",
+                    notification.type === 'warning' && "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400",
+                    notification.type === 'error' && "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400",
+                  )}
+                >
+                  <div className="flex items-center gap-2.5">
+                    {notification.type === 'success' && <CheckCircle2 className="h-5 w-5 shrink-0" />}
+                    {notification.type === 'info' && <Clock className="h-5 w-5 shrink-0" />}
+                    {notification.type === 'warning' && <AlertCircle className="h-5 w-5 shrink-0" />}
+                    {notification.type === 'error' && <AlertCircle className="h-5 w-5 shrink-0" />}
+                    <span className="text-sm font-medium">{notification.message}</span>
+                  </div>
+                  <button
+                    onClick={() => setNotification(null)}
+                    className="text-xs font-semibold opacity-70 hover:opacity-100 ml-4 underline"
+                  >
+                    Fermer
+                  </button>
+                </div>
+              )}
+
 
               {/* Workflow + Content Area */}
 
@@ -649,6 +836,8 @@ export function Dashboard() {
           )}
         </main>
       </div>
+      <QueueModal isOpen={showQueueModal} onClose={() => setShowQueueModal(false)} />
     </div>
   );
 }
+

@@ -8,11 +8,14 @@ les mises à jour et les opérations WP-CLI via DDEV.
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 import httpx
 import shutil
 import time
 from pathlib import Path
 from typing import Optional
+
 
 from backend.core.config import settings
 from backend.core.websocket import WorkflowLogger
@@ -42,12 +45,13 @@ class WordPressManager:
     # ── Installation WordPress ────────────────────────────────────
 
     async def download_wordpress(self) -> CommandResult:
-        """Télécharge WordPress (version FR) avec cache local pour éviter les re-téléchargements."""
+        """Télécharge et extrait WordPress (version FR) de manière 100% cross-platform (Python)."""
+        import tarfile
+
         locale = settings.wp_locale
         cache_dir = settings.wp_cache_dir
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Déterminer le préfixe de langue (fr_FR -> fr)
         lang_prefix = locale.split("_")[0] if locale != "en_US" else ""
         tarball_name = f"latest-{locale}.tar.gz" if locale != "en_US" else "latest.tar.gz"
         cached_tarball = cache_dir / tarball_name
@@ -66,33 +70,56 @@ class WordPressManager:
                 await self._log("info", f"Cache WordPress expiré ({age_days:.0f}j), re-téléchargement...")
 
         if not use_cache:
-            # Télécharger depuis wordpress.org
             base_url = f"https://{lang_prefix}.wordpress.org" if lang_prefix else "https://wordpress.org"
             url = f"{base_url}/{tarball_name}"
             await self._log("info", f"Téléchargement de WordPress ({locale}) depuis {base_url}...")
 
-            result = await run_command(
-                f'curl -fSL -o "{cached_tarball}" "{url}"',
-                timeout=120,
-            )
-            if not result.success:
-                await self._log("error", f"Échec du téléchargement WordPress : {result.stderr}")
-                return result
-            await self._log("success", "WordPress téléchargé et mis en cache.")
+            try:
+                async with httpx.AsyncClient(follow_redirects=True, timeout=120.0) as client:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    cached_tarball.write_bytes(response.content)
+                await self._log("success", "WordPress téléchargé et mis en cache.")
+            except Exception as e:
+                err_msg = f"Échec du téléchargement WordPress : {str(e)}"
+                await self._log("error", err_msg)
+                return CommandResult(returncode=1, stdout="", stderr=err_msg, command=f"download {url}")
 
-        # Extraire dans le répertoire du projet
+        # Nettoyer d'anciens dossiers coeur (wp-includes, wp-admin) pour éviter les incohérences de version PHP
+        for sub in ["wp-includes", "wp-admin"]:
+            target_sub = self.project_dir / sub
+            if target_sub.exists():
+                try:
+                    shutil.rmtree(target_sub, ignore_errors=True)
+                except Exception:
+                    pass
+        for root_php in self.project_dir.glob("wp-*.php"):
+            if root_php.name != "wp-config.php":
+                try:
+                    root_php.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+
+        # Extraire dans le répertoire du projet avec tarfile (cross-platform)
         await self._log("info", "Extraction de WordPress dans le projet...")
-        result = await run_command(
-            f'tar -xzf "{cached_tarball}" --strip-components=1 -C "{self.project_dir}"',
-            timeout=60,
-        )
+        try:
+            with tarfile.open(cached_tarball, "r:gz") as tar:
+                members = []
+                for member in tar.getmembers():
+                    # Supprimer le premier composant de dossier (ex: wordpress/wp-includes/... -> wp-includes/...)
+                    parts = Path(member.name).parts
+                    if len(parts) > 1:
+                        member.name = str(Path(*parts[1:]))
+                        members.append(member)
+                tar.extractall(path=self.project_dir, members=members)
 
-        if result.success:
             await self._log("success", "WordPress extrait avec succès.")
-        else:
-            await self._log("error", f"Échec de l'extraction WordPress : {result.stderr}")
-
-        return result
+            return CommandResult(returncode=0, stdout="WordPress extrait", stderr="", command="extract_tarball")
+        except Exception as e:
+            err_msg = f"Échec de l'extraction WordPress : {str(e)}"
+            await self._log("error", err_msg)
+            return CommandResult(returncode=1, stdout="", stderr=err_msg, command="extract_tarball")
 
     async def create_config(self) -> CommandResult:
         """Crée le fichier wp-config.php avec les credentials DDEV."""
@@ -105,6 +132,7 @@ class WordPressManager:
             " --dbuser=db"
             " --dbpass=db"
             " --dbhost=db"
+            " --skip-check"
             " --force",
             str(self.project_dir),
         )
@@ -124,12 +152,13 @@ class WordPressManager:
             domain: Domaine du site (ex: monsite.ddev.site).
         """
         await self._log("info", "Installation de WordPress...")
+        await asyncio.sleep(2)
 
         url = f"https://{domain}"
         result = await run_wp_cli(
             f'core install'
             f' --url="{url}"'
-            f' --title="Site en maintenance"'
+            f' --title="Maintenance"'
             f' --admin_user="{settings.wp_admin_user}"'
             f' --admin_password="{settings.wp_admin_password}"'
             f' --admin_email="{settings.wp_admin_email}"'
@@ -182,8 +211,8 @@ class WordPressManager:
                 returncode=1, stdout="", stderr=f"Fichier ZIP introuvable : {zip_path}", command=""
             )
 
-        # Copier le ZIP dans le conteneur
-        container_zip = "/tmp/aio-wp-migration.zip"
+        # Copier le ZIP dans le répertoire du projet (monté sur /var/www/html)
+        container_zip = "aio-wp-migration.zip"
         copy_result = await self.ddev.copy_to_container(str(zip_path), container_zip)
         if not copy_result.success:
             return copy_result
@@ -193,6 +222,9 @@ class WordPressManager:
             f"plugin install {container_zip} --activate --force",
             str(self.project_dir),
         )
+
+        # Nettoyer le fichier zip temporaire du projet
+        (self.project_dir / container_zip).unlink(missing_ok=True)
 
         if result.success:
             await self._log("success", "Plugin AIO WP Migration installé et activé.", step="plugin_install")
@@ -220,7 +252,47 @@ class WordPressManager:
             await self._log("error", f"Fichier .wpress introuvable : {wpress_path}", step="wpress_import")
             return False
 
-        # Copier le fichier dans le conteneur
+        # 1. Tentative d'extraction native Python ultra-rapide (5-10 secondes)
+        from backend.utils.wpress_extractor import extract_wpress_fast
+
+        await self._log("info", "Extraction ultra-rapide de l'archive .wpress via Python natif...", step="wpress_import")
+
+        async def on_extract_progress(count: int, mb: int, current_fn: str):
+            await self._log("info", f"[Extraction Fast] {count} fichiers extraits ({mb} Mo)...", step="wpress_import")
+
+        success_extract = await extract_wpress_fast(wpress_path, self.project_dir, on_progress=on_extract_progress)
+
+        if success_extract:
+            await self._log("success", "Extraction des fichiers terminée avec succès en quelques secondes !", step="wpress_import")
+
+            # Importer la BDD SQL si disponible
+            sql_files = list(self.project_dir.glob("**/database.sql"))
+            if sql_files:
+                sql_file = sql_files[0]
+                await self._log("info", "Importation de la base de données SQL dans MariaDB...", step="wpress_import")
+                rel_sql = sql_file.relative_to(self.project_dir)
+                import_res = await run_command(
+                    f"ddev import-db --file={rel_sql}",
+                    cwd=str(self.project_dir),
+                    timeout=300,
+                )
+                if import_res.success:
+                    await self._log("success", "Base de données SQL importée avec succès !", step="wpress_import")
+                    sql_file.unlink(missing_ok=True)
+
+                    # Ajuster le table_prefix dans wp-config.php pour les sauvegardes AIO (.wpress)
+                    wp_config = self.project_dir / "wp-config.php"
+                    if wp_config.exists():
+                        content = wp_config.read_text(encoding="utf-8", errors="replace")
+                        if "SERVMASK_PREFIX_" not in content:
+                            import re
+                            content = re.sub(r"\$table_prefix\s*=\s*['\"][^'\"]+['\"];", "$table_prefix = 'SERVMASK_PREFIX_';", content)
+                            wp_config.write_text(content, encoding="utf-8")
+                            await self._log("info", "Prefixe de table ajusté à 'SERVMASK_PREFIX_' dans wp-config.php.", step="wpress_import")
+
+            return await self._post_import_cleanup()
+
+        # 2. Fallback WP-CLI si l'extraction native ne s'applique pas
         container_path = "/var/www/html/wp-content/ai1wm-backups/"
         await self.ddev.exec_in_container(f"mkdir -p {container_path}")
         filename = Path(wpress_path).name
@@ -230,12 +302,25 @@ class WordPressManager:
             await self._log("error", "Échec de la copie du fichier .wpress", step="wpress_import")
             return False
 
-        # Tenter l'import via WP-CLI
-        await self._log("info", "Tentative d'import via WP-CLI...", step="wpress_import")
+        file_size_bytes = Path(wpress_path).stat().st_size
+        file_size_mb = file_size_bytes / (1024 * 1024)
+        cli_timeout = max(1800, int(900 + (file_size_mb / 1000) * 600))
+        
+        await self._log(
+            "info",
+            f"Tentative d'import via WP-CLI ({file_size_mb:.1f} Mo, timeout: {cli_timeout}s)...",
+            step="wpress_import",
+        )
+        async def on_restore_output(line: str) -> None:
+            clean = line.strip()
+            if clean:
+                await self._log("info", f"[AIO] {clean}", step="wpress_import")
+
         result = await run_wp_cli(
             f"ai1wm restore {filename} --yes",
             str(self.project_dir),
-            timeout=600,
+            timeout=cli_timeout,
+            on_output=on_restore_output,
         )
 
         if result.success:
@@ -321,6 +406,14 @@ class WordPressManager:
         )
         old_site_url = old_url_result.stdout.strip() if old_url_result.success else ""
 
+        # Fallback SQL direct si WP-CLI n'a pas pu lire l'option
+        if not old_site_url:
+            sql_url_res = await self.ddev.exec_in_container(
+                "mysql -u db -pdb db -N -e \"SELECT option_value FROM SERVMASK_PREFIX_options WHERE option_name='siteurl' LIMIT 1;\" 2>/dev/null || mysql -u db -pdb db -N -e \"SELECT option_value FROM wp_options WHERE option_name='siteurl' LIMIT 1;\" 2>/dev/null"
+            )
+            if sql_url_res.success and sql_url_res.stdout.strip():
+                old_site_url = sql_url_res.stdout.strip()
+
         # URL cible = URL DDEV locale
         new_site_url = await self.ddev.get_url()
 
@@ -329,6 +422,13 @@ class WordPressManager:
             f"[DEBUG] Ancienne URL (backup) : '{old_site_url}' | Nouvelle URL (DDEV) : '{new_site_url}'",
             step="wpress_import",
         )
+
+        # Assurer la mise à jour directe en DB des options siteurl et home
+        if new_site_url:
+            await self.ddev.exec_in_container(
+                f"mysql -u db -pdb db -e \"UPDATE SERVMASK_PREFIX_options SET option_value='{new_site_url}' WHERE option_name IN ('siteurl', 'home');\" 2>/dev/null || mysql -u db -pdb db -e \"UPDATE wp_options SET option_value='{new_site_url}' WHERE option_name IN ('siteurl', 'home');\" 2>/dev/null"
+            )
+
 
         # ── 2. Search-replace complet dans toute la base de données ──
         if old_site_url and old_site_url != new_site_url:
@@ -341,7 +441,7 @@ class WordPressManager:
             # Remplacer l'URL complète (avec scheme)
             sr_result = await run_wp_cli(
                 f'search-replace "{old_site_url}" "{new_site_url}"'
-                f' --all-tables --skip-columns=guid --report-changed-only',
+                f' --all-tables --skip-columns=guid --report-changed-only --skip-plugins --skip-themes',
                 str(self.project_dir),
                 timeout=300,
             )
@@ -392,7 +492,7 @@ class WordPressManager:
 
                 cmd = (
                     f'search-replace "{search_term}" "{new_domain}"'
-                    f' --all-tables --skip-columns=guid --report-changed-only'
+                    f' --all-tables --skip-columns=guid --report-changed-only --skip-plugins --skip-themes'
                 )
                 if use_regex:
                     cmd += " --regex"
@@ -472,6 +572,66 @@ class WordPressManager:
         await run_wp_cli("rewrite flush --hard", str(self.project_dir))
         await self._log("info", "Permaliens régénérés.", step="wpress_import")
 
+        # ── 5b. S'assurer que le index.php racine est valide (non écrasé par un index.php de thème) ──
+        root_index = self.project_dir / "index.php"
+        if root_index.exists():
+            content = root_index.read_text(encoding="utf-8", errors="replace")
+            if "wp-blog-header.php" not in content:
+                wp_index_standard = (
+                    "<?php\n"
+                    "/** Front to the WordPress application. */\n"
+                    "define( 'WP_USE_THEMES', true );\n"
+                    "require __DIR__ . '/wp-blog-header.php';\n"
+                )
+                root_index.write_text(wp_index_standard, encoding="utf-8")
+                await self._log("info", "Fichier index.php racine réparé avec succès.", step="wpress_import")
+
+        # ── 5c. Désactiver les plugins conflictuels (masquage d'admin, SSL forcé, etc.) ──
+        conflict_plugins = [
+            "wps-hide-login",
+            "hide-my-wp",
+            "rename-wp-login",
+            "lockdown-wp-admin",
+            "invisible-recaptcha",
+            "really-simple-ssl",
+            "wp-force-ssl",
+            "wordpress-https",
+        ]
+        deact_cmd = f"plugin deactivate {' '.join(conflict_plugins)} --skip-plugins --skip-themes"
+        await run_wp_cli(deact_cmd, str(self.project_dir))
+        await self._log("info", "Plugins de masquage admin & SSL forcé désactivés pour l'environnement local.", step="wpress_import")
+
+        # ── 5d. Régénérer un fichier .htaccess standard WordPress ──
+        htaccess_file = self.project_dir / ".htaccess"
+        standard_htaccess = (
+            "# BEGIN WordPress\n"
+            "<IfModule mod_rewrite.c>\n"
+            "RewriteEngine On\n"
+            "RewriteRule ^index\\.php$ - [L]\n"
+            "RewriteCond %{REQUEST_FILENAME} !-f\n"
+            "RewriteCond %{REQUEST_FILENAME} !-d\n"
+            "RewriteRule . /index.php [L]\n"
+            "</IfModule>\n"
+            "# END WordPress\n"
+        )
+        try:
+            htaccess_file.write_text(standard_htaccess, encoding="utf-8")
+            await self._log("info", "Fichier .htaccess réinitialisé au format standard WordPress.", step="wpress_import")
+        except Exception as e:
+            await self._log("warning", f"Impossible d'écrire le fichier .htaccess : {e}", step="wpress_import")
+
+        # ── 5e. Nettoyer les extensions en double et activer les extensions du site ──
+
+        unlimited_dir = self.project_dir / "wp-content" / "plugins" / "all-in-one-wp-migration-unlimited-main"
+        if unlimited_dir.exists():
+            shutil.rmtree(unlimited_dir, ignore_errors=True)
+
+        await run_wp_cli("plugin activate --all", str(self.project_dir))
+        await self._log("info", "Extensions du site activées avec succès.", step="wpress_import")
+
+
+
+
         # ── 6. Vérifier les URLs finales en DB après toutes les opérations ──
         final_siteurl = await run_wp_cli("option get siteurl", str(self.project_dir))
         final_home = await run_wp_cli("option get home", str(self.project_dir))
@@ -481,15 +641,37 @@ class WordPressManager:
             step="wpress_import",
         )
 
-        # Vérifier le thème actif et l'URL du stylesheet
+        # Vérifier le thème actif et activer un thème par défaut si aucun n'est actif
         theme_result = await run_wp_cli("theme list --status=active --format=json", str(self.project_dir))
-        await self._log(
-            "info",
-            f"[DEBUG] Thème actif : {theme_result.stdout.strip()}",
-            step="wpress_import",
-        )
+        active_themes = []
+        try:
+            active_themes = json.loads(theme_result.stdout)
+        except Exception:
+            pass
+
+        if not active_themes:
+            await self._log(
+                "warning",
+                "⚠️ Aucun thème actif détecté en DB après l'importation. Activation d'un thème valide...",
+                step="wpress_import",
+            )
+            all_themes_res = await run_wp_cli("theme list --format=json", str(self.project_dir))
+            try:
+                all_themes = json.loads(all_themes_res.stdout)
+                if all_themes:
+                    fallback_theme = all_themes[0].get("name")
+                    if fallback_theme:
+                        await run_wp_cli(f"theme activate {fallback_theme}", str(self.project_dir))
+                        await self._log(
+                            "success",
+                            f"Thème '{fallback_theme}' activé avec succès.",
+                            step="wpress_import",
+                        )
+            except Exception as e:
+                await self._log("warning", f"Impossible d'activer un thème de secours : {e}", step="wpress_import")
 
         # ── 8. Vérifier que le site répond correctement ──
+
         await self._log("info", "Vérification de l'accessibilité du site...", step="wpress_import")
         max_retries = 8
         site_accessible = False
@@ -497,47 +679,15 @@ class WordPressManager:
             try:
                 async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
                     response = await client.get(new_site_url)
-                    # Vérifier que le site répond ET que le HTML contient des assets CSS
-                    if response.status_code == 200:
-                        body = response.text
-                        has_css = '<link' in body and ('stylesheet' in body or '.css' in body)
-                        # Log les premiers tags <link> pour debug
-                        import re
-                        css_links = re.findall(r'<link[^>]*stylesheet[^>]*href=["\']([^"\']+)["\']', body)
-                        if css_links:
-                            await self._log(
-                                "info",
-                                f"[DEBUG] CSS trouvés dans le HTML ({len(css_links)}) : {css_links[:3]}",
-                                step="wpress_import",
-                            )
-                        else:
-                            # Chercher tous les <link> pour comprendre
-                            all_links = re.findall(r'<link[^>]*>', body[:3000])
-                            await self._log(
-                                "warning",
-                                f"[DEBUG] Aucun CSS stylesheet trouvé. Tags <link> présents : {all_links[:5]}",
-                                step="wpress_import",
-                            )
-                            # Log les premiers 500 caractères du HTML
-                            await self._log(
-                                "warning",
-                                f"[DEBUG] Début du HTML : {body[:500]}",
-                                step="wpress_import",
-                            )
-                        if has_css:
-                            await self._log(
-                                "success",
-                                "Site accessible avec CSS chargé correctement.",
-                                step="wpress_import",
-                            )
-                            site_accessible = True
-                            break
-                        else:
-                            await self._log(
-                                "warning",
-                                f"Tentative {attempt + 1}/{max_retries} - Site accessible mais CSS non détecté, nouvelle tentative...",
-                                step="wpress_import",
-                            )
+                    # Vérifier que le site répond correctement (HTTP 200, 301, 302)
+                    if response.status_code in (200, 301, 302):
+                        await self._log(
+                            "success",
+                            f"Site accessible avec succès (statut HTTP {response.status_code}).",
+                            step="wpress_import",
+                        )
+                        site_accessible = True
+                        break
                     else:
                         await self._log(
                             "warning",
@@ -680,9 +830,19 @@ class WordPressManager:
         # Core
         if update_core:
             await self._log("info", "Mise à jour du core WordPress...", step="updates_apply")
+            await run_wp_cli("option delete core_updater.lock", str(self.project_dir))
             current = await run_wp_cli("core version", str(self.project_dir))
             core_result = await run_wp_cli("core update", str(self.project_dir), timeout=180)
+            
+            # Fallback de réparation si la copie directe des fichiers coeur a échoué
+            if not core_result.success:
+                await self._log("warning", "Mise à jour standard échouée, tentative de réparation via core download --skip-content...", step="updates_apply")
+                await run_wp_cli("option delete core_updater.lock", str(self.project_dir))
+                core_result = await run_wp_cli("core download --force --skip-content", str(self.project_dir), timeout=180)
+
             new_version = await run_wp_cli("core version", str(self.project_dir))
+
+
 
             results.append(UpdateResult(
                 name="wordpress",

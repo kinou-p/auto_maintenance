@@ -25,12 +25,15 @@ env/
 
 # Base de données
 data/*.db
-data/*.db-journal
+data/*.db*
+data/scratch/
 
 # Données générées
 data/screenshots/
 data/reports/
 data/uploads/
+*.tsbuildinfo
+
 
 # Node
 node_modules/

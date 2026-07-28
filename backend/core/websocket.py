@@ -108,6 +108,8 @@ class WorkflowLogger:
         self.workflow_id = workflow_id
         self._logs: list[dict[str, Any]] = []
         self._logger = logging.getLogger(f"workflow.{project_id}.{workflow_id}")
+        self.on_log: Optional[Any] = None
+
 
     def _build_message(
         self,
@@ -146,6 +148,14 @@ class WorkflowLogger:
 
         # WebSocket
         await ws_manager.send_to_project(self.project_id, msg)
+
+        # Callback console / CLI direct
+        if self.on_log:
+            try:
+                self.on_log(msg)
+            except Exception:
+                pass
+
 
     async def info(self, message: str, step: Optional[str] = None, **kwargs: Any) -> None:
         await self._emit("info", message, step, kwargs.get("details"), kwargs.get("progress"))

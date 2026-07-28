@@ -75,17 +75,46 @@ class WorkflowOrchestrator:
         WorkflowStep.VRT_COMPARE: 5,
     }
 
+    IMPORT_ONLY_STEPS: list[str] = [
+        WorkflowStep.DDEV_CREATE.value if hasattr(WorkflowStep.DDEV_CREATE, "value") else str(WorkflowStep.DDEV_CREATE),
+        WorkflowStep.DNS_SETUP.value if hasattr(WorkflowStep.DNS_SETUP, "value") else str(WorkflowStep.DNS_SETUP),
+        WorkflowStep.WP_INSTALL.value if hasattr(WorkflowStep.WP_INSTALL, "value") else str(WorkflowStep.WP_INSTALL),
+        WorkflowStep.PLUGIN_INSTALL.value if hasattr(WorkflowStep.PLUGIN_INSTALL, "value") else str(WorkflowStep.PLUGIN_INSTALL),
+        WorkflowStep.WPRESS_IMPORT.value if hasattr(WorkflowStep.WPRESS_IMPORT, "value") else str(WorkflowStep.WPRESS_IMPORT),
+    ]
+
+
     def __init__(
         self,
         project_id: int,
         workflow_id: int,
         steps: Optional[list[str]] = None,
         selected_updates: Optional[dict] = None,
+        options: Optional[dict] = None,
     ) -> None:
         self.project_id = project_id
         self.workflow_id = workflow_id
-        self.steps = steps or [s.value for s in WorkflowStep]
         self.selected_updates = selected_updates or {}
+        self.options = options or self.selected_updates
+
+        import_only_active = (
+            self.options.get("import_only")
+            or self.options.get("no_maintenance")
+            or self.options.get("setup_only")
+            or self.selected_updates.get("import_only")
+            or self.selected_updates.get("no_maintenance")
+            or self.selected_updates.get("setup_only")
+        )
+
+        if steps:
+            self.steps = [s.value if hasattr(s, "value") else str(s) for s in steps]
+        elif import_only_active:
+            self.steps = list(self.IMPORT_ONLY_STEPS)
+        else:
+            self.steps = [s.value if hasattr(s, "value") else str(s) for s in WorkflowStep]
+
+
+
         self._cancelled = False
         self._current_step: Optional[str] = None
         self.logger = WorkflowLogger(project_id, workflow_id)
@@ -159,17 +188,18 @@ class WorkflowOrchestrator:
 
             # Exécuter chaque étape dans l'ordre
             step_handlers: dict[str, Any] = {
-                WorkflowStep.DDEV_CREATE: lambda: self._step_ddev_create(domain),
-                WorkflowStep.DNS_SETUP: lambda: self._step_dns_setup(domain),
-                WorkflowStep.WP_INSTALL: lambda: self._step_wp_install(domain),
-                WorkflowStep.PLUGIN_INSTALL: lambda: self._step_plugin_install(),
-                WorkflowStep.WPRESS_IMPORT: lambda: self._step_wpress_import(wpress_file),
-                WorkflowStep.SCREENSHOTS_BEFORE: lambda: self._step_screenshots("before"),
-                WorkflowStep.UPDATES_LIST: lambda: self._step_updates_list(),
-                WorkflowStep.UPDATES_APPLY: lambda: self._step_updates_apply(),
-                WorkflowStep.SCREENSHOTS_AFTER: lambda: self._step_screenshots("after"),
-                WorkflowStep.VRT_COMPARE: lambda: self._step_vrt_compare(),
+                WorkflowStep.DDEV_CREATE.value if hasattr(WorkflowStep.DDEV_CREATE, "value") else str(WorkflowStep.DDEV_CREATE): lambda: self._step_ddev_create(domain),
+                WorkflowStep.DNS_SETUP.value if hasattr(WorkflowStep.DNS_SETUP, "value") else str(WorkflowStep.DNS_SETUP): lambda: self._step_dns_setup(domain),
+                WorkflowStep.WP_INSTALL.value if hasattr(WorkflowStep.WP_INSTALL, "value") else str(WorkflowStep.WP_INSTALL): lambda: self._step_wp_install(domain),
+                WorkflowStep.PLUGIN_INSTALL.value if hasattr(WorkflowStep.PLUGIN_INSTALL, "value") else str(WorkflowStep.PLUGIN_INSTALL): lambda: self._step_plugin_install(),
+                WorkflowStep.WPRESS_IMPORT.value if hasattr(WorkflowStep.WPRESS_IMPORT, "value") else str(WorkflowStep.WPRESS_IMPORT): lambda: self._step_wpress_import(wpress_file),
+                WorkflowStep.SCREENSHOTS_BEFORE.value if hasattr(WorkflowStep.SCREENSHOTS_BEFORE, "value") else str(WorkflowStep.SCREENSHOTS_BEFORE): lambda: self._step_screenshots("before"),
+                WorkflowStep.UPDATES_LIST.value if hasattr(WorkflowStep.UPDATES_LIST, "value") else str(WorkflowStep.UPDATES_LIST): lambda: self._step_updates_list(),
+                WorkflowStep.UPDATES_APPLY.value if hasattr(WorkflowStep.UPDATES_APPLY, "value") else str(WorkflowStep.UPDATES_APPLY): lambda: self._step_updates_apply(),
+                WorkflowStep.SCREENSHOTS_AFTER.value if hasattr(WorkflowStep.SCREENSHOTS_AFTER, "value") else str(WorkflowStep.SCREENSHOTS_AFTER): lambda: self._step_screenshots("after"),
+                WorkflowStep.VRT_COMPARE.value if hasattr(WorkflowStep.VRT_COMPARE, "value") else str(WorkflowStep.VRT_COMPARE): lambda: self._step_vrt_compare(),
             }
+
 
             completed_steps: list[str] = []
             failed_steps: list[str] = []
@@ -265,11 +295,13 @@ class WorkflowOrchestrator:
 
                 project = await session.get(Project, self.project_id)
                 if project:
+                    is_import_only = self.selected_updates.get("import_only") or self.selected_updates.get("no_maintenance") or self.selected_updates.get("setup_only")
                     project.status = (
-                        ProjectStatus.MAINTENANCE_DONE if not failed_steps
-                        else ProjectStatus.ERROR
+                        ProjectStatus.READY if (is_import_only and not failed_steps)
+                        else (ProjectStatus.MAINTENANCE_DONE if not failed_steps else ProjectStatus.ERROR)
                     )
                     await session.commit()
+
 
             await self.logger.progress("workflow", 100, "Workflow terminé")
             await self.logger.info(
@@ -433,12 +465,13 @@ class WorkflowOrchestrator:
                         step=f"screenshots_{phase}",
                     )
                 else:
-                    # Vérifier la présence de CSS dans le HTML
+                    # Vérifier la présence de CSS dans le HTML (link ou style inline)
+
                     body = response.text
-                    has_css = '<link' in body and ('stylesheet' in body or '.css' in body)
+                    has_css = ('<link' in body and ('stylesheet' in body or '.css' in body)) or '<style' in body
                     if not has_css:
                         await self.logger.warning(
-                            "Aucune feuille de style CSS détectée dans le HTML. "
+                            "Aucune feuille de style CSS ou balise <style> détectée dans le HTML. "
                             "Les screenshots risquent de montrer du HTML brut.",
                             step=f"screenshots_{phase}",
                         )
@@ -456,12 +489,29 @@ class WorkflowOrchestrator:
             )
             return
 
+        page_names = [p.get("name", "page") for p in pages]
+        await self.logger.info(
+            f"🔍 {len(pages)} page(s) détectée(s) pour la capture ({phase}) : {', '.join(page_names)}",
+            step=f"screenshots_{phase}",
+        )
+
         await self._screenshots.capture_screenshots(pages, phase)
 
     async def _step_updates_list(self) -> None:
         """Étape 7 : Liste des mises à jour disponibles."""
         assert self._wp is not None
         updates = await self._wp.list_updates()
+
+        tot = updates.get("total_available", 0)
+        core_up = updates.get("core")
+        core_str = f"Core ({core_up.current_version} -> {core_up.new_version})" if core_up else "Core (à jour)"
+        plugins_cnt = len(updates.get("plugins", []))
+        themes_cnt = len(updates.get("themes", []))
+
+        await self.logger.info(
+            f"📦 {tot} mise(s) à jour détectée(s) : {core_str}, {plugins_cnt} plugin(s), {themes_cnt} thème(s).",
+            step="updates_list",
+        )
 
         # Envoyer la liste via WebSocket pour affichage dans le dashboard
         await ws_manager.send_to_project(self.project_id, {
@@ -492,10 +542,23 @@ class WorkflowOrchestrator:
         if theme_names is None and hasattr(self, "_available_updates"):
             theme_names = [t.name for t in self._available_updates.get("themes", [])]
 
+        await self.logger.info(
+            f"⚙️ Application des mises à jour en cours... (Core: {update_core}, Plugins: {len(plugin_names or [])}, Thèmes: {len(theme_names or [])})",
+            step="updates_apply",
+        )
+
         results = await self._wp.apply_updates(
             update_core=update_core,
             plugin_names=plugin_names or [],
             theme_names=theme_names or [],
+        )
+
+        total_success = sum(1 for r in results if r.success)
+        total_failed = sum(1 for r in results if not r.success)
+
+        await self.logger.info(
+            f"✅ Application terminée : {total_success}/{len(results)} mise(s) à jour réussie(s) ({total_failed} échec(s)).",
+            step="updates_apply",
         )
 
         async with async_session() as session:
@@ -514,13 +577,11 @@ class WorkflowOrchestrator:
         async with async_session() as session:
             workflow = await session.get(Workflow, self.workflow_id)
             if workflow:
-                total_success = sum(1 for r in results if r.success)
-                total_failed = sum(1 for r in results if not r.success)
                 workflow.updates_stats = {
                     "total": len(results),
                     "success": total_success,
                     "failed": total_failed,
-                    "img_optim_saved_bytes": 0,  # Placeholder pour future feature
+                    "img_optim_saved_bytes": 0,
                 }
                 await session.commit()
 
@@ -528,6 +589,27 @@ class WorkflowOrchestrator:
         """Étape 10 : Comparaison visuelle avant/après."""
         assert self._vrt is not None
         report = await self._vrt.compare_all()
+
+        total_p = report.get("total_pages", 0)
+        passed_p = report.get("total_passed", 0)
+        failed_p = report.get("total_failed", 0)
+
+        await self.logger.info(
+            f"📊 Synthèse VRT : {passed_p}/{total_p} test(s) visuel(s) validé(s) ({failed_p} écart(s) détecté(s)).",
+            step="vrt_compare",
+        )
+
+        for item in report.get("items", []):
+            p_name = item.get("page_name", "page")
+            dev = item.get("device", "desktop")
+            ssim = item.get("ssim_score", 0.0)
+            diff = item.get("diff_percentage", 0.0)
+            is_passed = item.get("passed", False)
+            verdict = "PASSED ✅" if is_passed else "FAILED ⚠️"
+            await self.logger.info(
+                f"  • {p_name} ({dev}) -> SSIM: {ssim:.4f} | Diff: {diff:.2f}% | Statut: {verdict}",
+                step="vrt_compare",
+            )
 
         # Sauvegarder les résultats VRT en DB
         async with async_session() as session:
@@ -553,6 +635,7 @@ class WorkflowOrchestrator:
             "type": "vrt_report",
             "data": report,
         })
+
 
     # ── Nettoyage ─────────────────────────────────────────────────
 

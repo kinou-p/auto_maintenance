@@ -39,6 +39,7 @@ class WorkflowStart(BaseModel):
     project_id: int
     steps: Optional[list[str]] = None  # None = toutes les étapes
     selected_updates: Optional[list[str]] = None  # plugins/thèmes à mettre à jour
+    import_only: bool = False  # Si True: setup DDEV/WP + import .wpress sans maintenance
 
 
 class WorkflowResponse(BaseModel):

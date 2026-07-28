@@ -23,6 +23,7 @@ export type ProjectStatus =
   | 'maintenance_done'
   | 'error'
   | 'stopped'
+  | 'paused'
   | 'deleting';
 
 // ── Workflow ─────────────────────────────────────────────────────
@@ -152,6 +153,7 @@ export interface HealthCheck {
 
 export interface DDEVContainer {
   name: string;
+  project_id?: number;
   status: string;
   php_version: string;
   db_type: string;

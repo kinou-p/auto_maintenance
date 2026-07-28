@@ -71,11 +71,54 @@ export const getProjectStatus = (id: number) =>
     `/projects/${id}/status`,
   );
 
+function uploadWithProgress<T>(
+  url: string,
+  formData: FormData,
+  onProgress?: (progress: number) => void,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+
+    if (onProgress && xhr.upload) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          onProgress(percent);
+        }
+      };
+    }
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+        } catch {
+          resolve(xhr.responseText as unknown as T);
+        }
+      } else {
+        try {
+          const err = JSON.parse(xhr.responseText);
+          reject(new Error(err.detail || `API Error ${xhr.status}`));
+        } catch {
+          reject(new Error(`API Error ${xhr.status}`));
+        }
+      }
+    };
+
+    xhr.onerror = () => reject(new Error('Erreur réseau lors de l\'envoi du fichier.'));
+    xhr.ontimeout = () => reject(new Error('Le délai d\'envoi a expiré.'));
+
+    xhr.send(formData);
+  });
+}
+
 export const createProject = async (
   name: string,
   domain?: string,
   wpress?: File,
   localFilePath?: string,
+  onProgress?: (progress: number) => void,
 ): Promise<Project> => {
   const formData = new FormData();
   formData.append('name', name);
@@ -83,17 +126,7 @@ export const createProject = async (
   if (wpress) formData.append('wpress_file', wpress);
   if (localFilePath) formData.append('local_file_path', localFilePath);
 
-  const res = await fetch(`${API_BASE}/projects/`, {
-    method: 'POST',
-    body: formData,
-  });
-
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || `API Error ${res.status}`);
-  }
-
-  return res.json();
+  return uploadWithProgress<Project>(`${API_BASE}/projects/`, formData, onProgress);
 };
 
 export const listWpressFiles = () =>
@@ -101,23 +134,14 @@ export const listWpressFiles = () =>
 
 export const createProjectsBatch = async (
   wpressFiles: File[],
+  onProgress?: (progress: number) => void,
 ): Promise<{ status: string; message: string; created: Project[]; errors: Array<{ file: string; error: string }> }> => {
   const formData = new FormData();
   wpressFiles.forEach((file) => {
     formData.append('wpress_files', file);
   });
 
-  const res = await fetch(`${API_BASE}/projects/batch`, {
-    method: 'POST',
-    body: formData,
-  });
-
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || `API Error ${res.status}`);
-  }
-
-  return res.json();
+  return uploadWithProgress(`${API_BASE}/projects/batch`, formData, onProgress);
 };
 
 export const createProjectsFromLibrary = async (
@@ -146,6 +170,11 @@ export const stopProject = (id: number) =>
     method: 'POST',
   });
 
+export const pauseProject = (id: number) =>
+  apiFetch<{ status: string; message: string }>(`/projects/${id}/pause`, {
+    method: 'POST',
+  });
+
 export const startProject = (id: number) =>
   apiFetch<{ status: string; message: string }>(`/projects/${id}/start`, {
     method: 'POST',
@@ -168,6 +197,7 @@ export const startWorkflow = (
   projectId: number,
   steps?: string[],
   selectedUpdates?: string[],
+  importOnly?: boolean,
 ) =>
   apiFetch<Workflow>('/workflows/', {
     method: 'POST',
@@ -175,14 +205,16 @@ export const startWorkflow = (
       project_id: projectId,
       steps,
       selected_updates: selectedUpdates,
+      import_only: importOnly,
     }),
   });
 
-export const startBatchWorkflows = (projectIds: number[]) =>
+export const startBatchWorkflows = (projectIds: number[], importOnly?: boolean) =>
   apiFetch<Workflow[]>('/workflows/batch', {
     method: 'POST',
-    body: JSON.stringify(projectIds),
+    body: JSON.stringify({ project_ids: projectIds, import_only: importOnly }),
   });
+
 
 export const getWorkflow = (id: number) =>
   apiFetch<Workflow>(`/workflows/${id}`);
@@ -202,6 +234,24 @@ export const getWorkflowLogs = (id: number) =>
   apiFetch<{ workflow_id: number; status: string; logs: unknown[] }>(
     `/workflows/${id}/logs`,
   );
+
+export interface QueueItem {
+  id: number;
+  project_id: number;
+  project_name: string;
+  domain: string;
+  status: string;
+  current_step?: string;
+  position: number;
+  created_at?: string;
+  started_at?: string;
+}
+
+export const getWorkflowQueue = () =>
+  apiFetch<{ queue: QueueItem[]; total_active: number; total_pending: number }>(
+    '/workflows/queue',
+  );
+
 
 // ── Updates ──────────────────────────────────────────────────────
 export const getUpdates = (projectId: number) =>
@@ -266,6 +316,12 @@ export const startContainer = (name: string) =>
 
 export const stopContainer = (name: string) =>
   apiFetch<{ status: string; message: string }>(`/system/containers/${name}/stop`, {
+    method: 'POST',
+    timeout: 60000,
+  });
+
+export const pauseContainer = (name: string) =>
+  apiFetch<{ status: string; message: string }>(`/system/containers/${name}/pause`, {
     method: 'POST',
     timeout: 60000,
   });

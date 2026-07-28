@@ -108,6 +108,29 @@ L'application sera accessible sur :
 - **Dashboard** : [http://localhost:5173](http://localhost:5173)
 - **API Docs** : [http://localhost:8000/docs](http://localhost:8000/docs)
 
+### Mode CLI (Ligne de Commande) 💻
+
+Une interface CLI complète est disponible pour tester et administrer vos projets sans ouvrir l'interface web :
+
+```bash
+# Menu interactif guidé
+python cli.py interactive
+
+# Gestion des projets
+python cli.py projects list
+python cli.py projects status <nom-projet>
+python cli.py projects start <nom-projet>
+
+# Mises à jour WordPress & Visual Regression Testing (VRT)
+python cli.py wp updates <nom-projet>
+python cli.py vrt test <nom-projet>
+python cli.py maintenance run <nom-projet>
+
+# Diagnostic système
+python cli.py system status
+```
+
+
 ## 🏗️ Architecture Technique
 
 - **Backend** : FastAPI, SQLAlchemy (Async), aiosqlite.

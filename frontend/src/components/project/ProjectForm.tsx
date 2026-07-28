@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/Card';
-import { createProject, createProjectsBatch, listWpressFiles, createProjectsFromLibrary } from '@/lib/api';
+import { createProject, createProjectsBatch, listWpressFiles, createProjectsFromLibrary, getProjects } from '@/lib/api';
 import { useAppStore } from '@/stores/appStore';
 import { Upload, FolderPlus, Loader2, Files } from 'lucide-react';
 
@@ -25,6 +25,7 @@ export function ProjectForm() {
 
   // States globaux
   const [loading, setLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -71,7 +72,7 @@ export function ProjectForm() {
     setUploadFiles(newFiles);
 
     // Auto-fill name si un seul fichier
-    if (newFiles.length === 1 && !name) {
+    if (newFiles.length === 1 && newFiles[0] && !name) {
       const autoName = newFiles[0].name
         .replace('.wpress', '')
         .replace(/[^a-zA-Z0-9_-]/g, '-')
@@ -114,22 +115,26 @@ export function ProjectForm() {
           throw new Error("Veuillez sélectionner au moins un fichier .wpress");
         }
 
-        if (uploadFiles.length === 1) {
+        setUploadProgress(0);
+
+        if (uploadFiles.length === 1 && uploadFiles[0]) {
           // Création simple
           if (!name.trim()) throw new Error("Le nom du projet est requis.");
           const project = await createProject(
             name.trim(),
             domain.trim() || undefined,
-            uploadFiles[0]
+            uploadFiles[0],
+            undefined,
+            (progress) => setUploadProgress(progress)
           );
           setCurrentProject(project);
           setProjects([project, ...projects]);
         } else {
           // Création Batch (Upload)
-          const result = await createProjectsBatch(uploadFiles);
+          const result = await createProjectsBatch(uploadFiles, (progress) => setUploadProgress(progress));
           if (result.created.length > 0) {
             setProjects([...result.created, ...projects]);
-            setCurrentProject(result.created[0]);
+            if (result.created[0]) setCurrentProject(result.created[0]);
           }
           if (result.errors.length > 0) {
             const errorMsg = result.errors.map(e => `${e.file}: ${e.error}`).join('\n');
@@ -152,7 +157,7 @@ export function ProjectForm() {
         const result = await createProjectsFromLibrary(selectedLibraryFiles);
         if (result.created.length > 0) {
           setProjects([...result.created, ...projects]);
-          setCurrentProject(result.created[0]);
+          if (result.created[0]) setCurrentProject(result.created[0]);
         }
         if (result.errors.length > 0) {
           const errorMsg = result.errors.map(e => `${e.file}: ${e.error}`).join('\n');
@@ -164,7 +169,14 @@ export function ProjectForm() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Une erreur est survenue');
     } finally {
+      try {
+        const fresh = await getProjects();
+        setProjects(fresh.projects);
+      } catch {
+        // ignore
+      }
       setLoading(false);
+      setUploadProgress(null);
     }
   };
 
@@ -348,6 +360,22 @@ export function ProjectForm() {
             </div>
           )}
 
+          {/* Barre de progression */}
+          {uploadProgress !== null && (
+            <div className="space-y-1.5 p-3 bg-primary/5 rounded-md border border-primary/20">
+              <div className="flex justify-between text-xs font-medium text-primary">
+                <span>Téléversement du fichier...</span>
+                <span>{uploadProgress}%</span>
+              </div>
+              <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-primary h-2 rounded-full transition-all duration-150"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
         </CardContent>
 
         <CardFooter className="pt-2">
@@ -363,7 +391,7 @@ export function ProjectForm() {
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Traitement en cours...
+                {uploadProgress !== null ? `Téléversement (${uploadProgress}%)...` : 'Traitement en cours...'}
               </>
             ) : (
               activeTab === 'new'

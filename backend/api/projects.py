@@ -81,8 +81,7 @@ async def create_project(
         wpress_dest = upload_dir / wpress_file.filename
 
         with open(wpress_dest, "wb") as f:
-            content = await wpress_file.read()
-            f.write(content)
+            shutil.copyfileobj(wpress_file.file, f)
 
         wpress_path = str(wpress_dest)
 
@@ -184,8 +183,7 @@ async def create_projects_batch(
             
             # Lire et sauvegarder le contenu
             with open(wpress_dest, "wb") as f:
-                content = await wpress_file.read()
-                f.write(content)
+                shutil.copyfileobj(wpress_file.file, f)
             
             wpress_path = str(wpress_dest)
             
@@ -541,6 +539,25 @@ async def stop_project(project_id: int) -> StatusResponse:
         raise HTTPException(500, f"Impossible d'arrêter le projet : {result.stderr}")
 
 
+@router.post("/{project_id}/pause", response_model=StatusResponse)
+async def pause_project(project_id: int) -> StatusResponse:
+    """Met en pause les conteneurs DDEV d'un projet."""
+    async with async_session() as session:
+        project = await session.get(Project, project_id)
+        if not project:
+            raise HTTPException(404, f"Projet {project_id} introuvable.")
+
+        ddev = DDEVManager(project.name)
+        result = await ddev.pause()
+
+        if result.success:
+            project.status = ProjectStatus.PAUSED
+            await session.commit()
+            return StatusResponse(status="success", message="Projet mis en pause.")
+
+        raise HTTPException(500, f"Impossible de mettre le projet en pause : {result.stderr}")
+
+
 @router.post("/{project_id}/start", response_model=StatusResponse)
 async def start_project(project_id: int) -> StatusResponse:
     """Démarre les conteneurs DDEV d'un projet."""
@@ -588,7 +605,7 @@ async def restart_project(project_id: int) -> StatusResponse:
 
 @router.get("/{project_id}/status")
 async def get_project_status(project_id: int) -> dict:
-    """Récupère le statut détaillé d'un projet (infos DDEV incluses)."""
+    """Récupère le statut détaillé d'un projet (infos DDEV incluses) et synchronise le statut BDD."""
     async with async_session() as session:
         project = await session.get(Project, project_id)
         if not project:
@@ -596,6 +613,25 @@ async def get_project_status(project_id: int) -> dict:
 
         ddev = DDEVManager(project.name)
         ddev_status = await ddev.get_status()
+
+        # Réconciliation automatique du statut BDD avec l'état réel DDEV
+        transient_statuses = {
+            ProjectStatus.INITIALIZING,
+            ProjectStatus.IMPORTING,
+            ProjectStatus.MAINTENANCE_IN_PROGRESS,
+            ProjectStatus.DELETING,
+        }
+        if project.status not in transient_statuses:
+            status_str = ddev_status.get("status", "")
+            if status_str == "paused" and project.status != ProjectStatus.PAUSED:
+                project.status = ProjectStatus.PAUSED
+                await session.commit()
+            elif status_str == "stopped" and project.status not in (ProjectStatus.STOPPED, ProjectStatus.CREATED, ProjectStatus.ERROR):
+                project.status = ProjectStatus.STOPPED
+                await session.commit()
+            elif status_str == "running" and project.status in (ProjectStatus.STOPPED, ProjectStatus.PAUSED):
+                project.status = ProjectStatus.READY
+                await session.commit()
 
         return {
             "project": ProjectResponse.model_validate(project).model_dump(),

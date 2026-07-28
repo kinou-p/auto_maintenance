@@ -57,11 +57,19 @@ async def start_workflow(request: WorkflowStart) -> WorkflowResponse:
         if running.scalar_one_or_none():
             raise HTTPException(409, "Un workflow est déjà en cours ou en attente pour ce projet.")
 
+        options = {}
+        if request.steps:
+            options["steps"] = request.steps
+        if request.selected_updates:
+            options["selected_updates"] = request.selected_updates
+        if request.import_only:
+            options["import_only"] = True
+
         # Créer le workflow en DB
         workflow = Workflow(
             project_id=request.project_id,
             status=WorkflowStatus.PENDING,
-            # TODO: Stocker steps et selected_updates dans la DB pour que le QueueManager puisse les utiliser
+            options=options,
         )
         session.add(workflow)
         await session.commit()
@@ -72,10 +80,20 @@ async def start_workflow(request: WorkflowStart) -> WorkflowResponse:
     # Ajouter à la file d'attente
     await queue_manager.add_to_queue(workflow_id)
 
+    # Notifier tous les clients de la mise à jour de la file
+    await ws_manager.broadcast({
+        "type": "queue_updated",
+        "workflow_id": workflow_id,
+        "project_id": request.project_id,
+        "status": "pending",
+        "message": "Nouveau workflow ajouté à la file.",
+    })
+
     # Retourner immédiatement
     async with async_session() as session:
         workflow = await session.get(Workflow, workflow_id)
         return WorkflowResponse.model_validate(workflow)
+
 
 
 @router.post("/batch", response_model=list[WorkflowResponse], status_code=201)
@@ -148,15 +166,18 @@ async def get_active_workflow_for_project(project_id: int) -> Optional[WorkflowR
     """Récupère le workflow actif (RUNNING ou PENDING) d'un projet s'il existe."""
     async with async_session() as session:
         result = await session.execute(
-            select(Workflow).where(
+            select(Workflow)
+            .where(
                 Workflow.project_id == project_id,
                 Workflow.status.in_([WorkflowStatus.RUNNING, WorkflowStatus.PENDING]),
             )
+            .order_by(Workflow.id.desc())
         )
-        workflow = result.scalar_one_or_none()
+        workflow = result.scalars().first()
         if workflow:
             return WorkflowResponse.model_validate(workflow)
         return None
+
 
 
 @router.post("/{workflow_id}/cancel", response_model=StatusResponse)
@@ -193,3 +214,44 @@ async def get_workflow_logs(workflow_id: int) -> dict:
             "status": workflow.status.value if workflow.status else "unknown",
             "logs": workflow.logs or [],
         }
+
+
+@router.get("/queue")
+async def get_workflow_queue() -> dict:
+    """Récupère la liste complète des workflows en cours (RUNNING) et en attente (PENDING)."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Workflow, Project.name, Project.domain)
+            .join(Project, Workflow.project_id == Project.id)
+            .where(Workflow.status.in_([WorkflowStatus.RUNNING, WorkflowStatus.PENDING]))
+            .order_by(Workflow.created_at.asc())
+        )
+        rows = result.all()
+
+        items = []
+        pending_counter = 0
+        for wf, project_name, domain in rows:
+            is_running = wf.status == WorkflowStatus.RUNNING
+            position = 0
+            if not is_running:
+                pending_counter += 1
+                position = pending_counter
+
+            items.append({
+                "id": wf.id,
+                "project_id": wf.project_id,
+                "project_name": project_name,
+                "domain": domain,
+                "status": wf.status.value if hasattr(wf.status, "value") else str(wf.status),
+                "current_step": wf.current_step,
+                "position": position,
+                "created_at": wf.created_at.isoformat() if wf.created_at else None,
+                "started_at": wf.started_at.isoformat() if wf.started_at else None,
+            })
+
+        return {
+            "queue": items,
+            "total_active": len([i for i in items if i["status"] == "running"]),
+            "total_pending": pending_counter,
+        }
+

@@ -63,10 +63,17 @@ class ScreenshotManager:
         if self.logger:
             await getattr(self.logger, level)(message, step=step)
 
-    def _get_output_dir(self, phase: str) -> Path:
+    def _get_output_dir(self, phase: str, clean_old: bool = True) -> Path:
         output_dir = settings.screenshots_dir / self.project_name / phase
         output_dir.mkdir(parents=True, exist_ok=True)
+        if clean_old:
+            for f in output_dir.glob("*.png"):
+                try:
+                    f.unlink(missing_ok=True)
+                except Exception:
+                    pass
         return output_dir
+
 
     def _sanitize_filename(self, name: str) -> str:
         return "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
@@ -245,18 +252,23 @@ class ScreenshotManager:
 
         try:
             # Naviguer vers la page
-            await page.goto(url, wait_until="load", timeout=settings.playwright_timeout)
+            await page.goto(url, wait_until="domcontentloaded", timeout=settings.playwright_timeout)
 
-            # Attendre le chargement complet
-            await page.wait_for_load_state("domcontentloaded")
-            await page.wait_for_load_state("load")
-            await page.wait_for_load_state("networkidle")
+            # Attendre le chargement complet avec fallback doux
+            try:
+                await page.wait_for_load_state("load", timeout=10000)
+                await page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
 
             # Attendre les fonts
-            await page.evaluate("document.fonts.ready")
+            try:
+                await page.evaluate("document.fonts.ready")
+            except Exception:
+                pass
 
             # Attendre le rendu CSS
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(1000)
 
             # Scroll pour lazy loading
             await self._scroll_page(page)

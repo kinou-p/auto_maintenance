@@ -67,39 +67,37 @@ class WorkflowQueueManager:
             
             try:
                 while True:
-                    # 1. Vérifier si un workflow est déjà en cours d'exécution
-                    # (via le registre de l'orchestrator ou DB)
-                    # Note : L'orchestrator garde les workflows actifs en mémoire
-                    # mais pour être sûr, on regarde la DB aussi.
-                    
-                        # 1. Vérifier si un workflow est déjà en cours d'exécution
                     async with async_session() as session:
-                        running = await session.execute(
+                        # 1. Vérifier si un workflow est déjà en cours d'exécution
+                        running_res = await session.execute(
                             select(Workflow).where(Workflow.status == WorkflowStatus.RUNNING)
                         )
-                        existing_running = running.scalar_one_or_none()
-                        
-                        if existing_running:
-                            # Si on a le lock, c'est qu'on ne tourne pas nous-même.
-                            # Donc c'est un zombie (crash précédent ?).
-                            # On le marque en erreur pour débloquer la file.
-                            logger.warning(
-                                f"Workflow {existing_running.id} détecté en statut RUNNING (Zombie). "
-                                "Marquage comme FAILED et continuation de la file."
-                            )
-                            existing_running.status = WorkflowStatus.FAILED
-                            existing_running.error_message = "Arrêt inattendu (Zombie détecté)"
-                            existing_running.completed_at = datetime.now(timezone.utc)
-                            await session.commit()
-                            
-                            # Notifier le frontend
-                            await ws_manager.broadcast({
-                                "type": "workflow_status",
-                                "workflow_id": existing_running.id,
-                                "project_id": existing_running.project_id,
-                                "status": "failed",
-                                "completed": False,
-                            })
+                        running_list = running_res.scalars().all()
+                        active_running_found = False
+
+                        for wf_item in running_list:
+                            if get_active_workflow(wf_item.id) is None:
+                                logger.warning(
+                                    f"Workflow {wf_item.id} détecté en statut RUNNING sans orchestration active (Zombie). "
+                                    "Marquage comme FAILED et continuation de la file."
+                                )
+                                wf_item.status = WorkflowStatus.FAILED
+                                wf_item.error_message = "Arrêt inattendu (Zombie détecté)"
+                                wf_item.completed_at = datetime.now(timezone.utc)
+                                await session.commit()
+                            else:
+                                active_running_found = True
+
+                        if active_running_found:
+
+                                
+                                await ws_manager.broadcast({
+                                    "type": "workflow_status",
+                                    "workflow_id": existing_running.id,
+                                    "project_id": existing_running.project_id,
+                                    "status": "failed",
+                                    "completed": False,
+                                })
 
                         # 2. Récupérer le plus vieux workflow PENDING
                         result = await session.execute(
@@ -116,43 +114,22 @@ class WorkflowQueueManager:
 
                         workflow_id = next_workflow.id
                         project_id = next_workflow.project_id
-                        
-                        # Récupérer les options (stockées temporairement ou par convention)
-                        # Dans notre cas actuel, Workflow ne stocke pas 'selected_updates' 
-                        # dans un champ dédié structuré pour l'orchestrator, 
-                        # mais l'orchestrator est instancié avec.
-                        # PROBLÈME : Quand on queue, on perd les arguments passés à l'API 
-                        # s'ils ne sont pas en DB.
-                        # 
-                        # Solution rapide : On va assumer que pour le batch, on veut tout mettre à jour
-                        # ou on va devoir stocker les options dans la table Workflow.
-                        # 
-                        # Pour l'instant, pour simplifier sans migration lourde :
-                        # On va instancier l'orchestrator avec des défauts ou ce qu'on peut.
-                        # Idéalement il faudrait ajouter une colonne 'options' ou 'payload' à Workflow.
-                        
-                        # Pour ce hackathon/MVP, on va relire le code de workflows.py
-                        # L'API actuelle crée l'orchestrator tout de suite.
-                        # Nous devons changer ça.
+                        options = next_workflow.options or {}
+                        steps = options.get("steps")
+                        selected_updates = options.get("selected_updates")
                         
                         logger.info(f"Démarrage du workflow {workflow_id} pour le projet {project_id}")
 
                     # 3. Exécuter le workflow
                     try:
-                        # On recrée l'orchestrator ici.
-                        # ATTENTION : Il nous manque les paramètres spécifiques (steps, selected_updates).
-                        # Si on veut supporter les options personnalisées en asynchrone, 
-                        # il faut les persister. 
-                        # 
-                        # On va patcher ça en ajoutant un champ temporaire en mémoire
-                        # ou en acceptant des défauts (tout faire).
-                        
                         orchestrator = WorkflowOrchestrator(
                             project_id=project_id,
                             workflow_id=workflow_id,
-                            # Par défaut, exécute toutes les étapes si pas spécifié
-                            # TODO: Persister les options dans la DB pour un support complet
+                            steps=steps,
+                            selected_updates=selected_updates,
+                            options=options,
                         )
+
                         
                         # Exécution (bloquante pour la boucle while, mais async)
                         await orchestrator.run()

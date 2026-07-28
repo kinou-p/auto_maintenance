@@ -12,8 +12,15 @@ from __future__ import annotations
 
 import logging
 import sys
+import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+
+if sys.platform == "win32":
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except Exception:
+        pass
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -156,8 +163,8 @@ async def health_check() -> dict:
     ddev_installed = False
     docker_running = False
 
-    ddev_result = await run_command("ddev version", timeout=5)
-    ddev_installed = ddev_result.success
+    ddev_result = await run_command("ddev --version", timeout=5)
+    ddev_installed = ddev_result.success or "ddev" in ddev_result.stdout.lower() or shutil.which("ddev") is not None
 
     docker_result = await run_command("docker info", timeout=5)
     docker_running = docker_result.success

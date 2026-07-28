@@ -4,6 +4,7 @@ import {
     Box,
     RefreshCcw,
     Play,
+    Pause,
     Square,
     RotateCcw,
     Trash2,
@@ -20,6 +21,7 @@ import {
 import {
     listContainers,
     startContainer,
+    pauseContainer,
     stopContainer,
     restartContainer,
     deleteContainer,
@@ -56,12 +58,13 @@ export const Containers: React.FC = () => {
         fetchContainers();
     }, []);
 
-    const handleAction = async (name: string, action: 'start' | 'stop' | 'restart' | 'delete') => {
+    const handleAction = async (name: string, action: 'start' | 'pause' | 'stop' | 'restart' | 'delete') => {
         if (action === 'delete' && !confirm(`Voulez-vous vraiment supprimer le projet "${name}" ?`)) return;
 
         setActionLoading(`${name}-${action}`);
         try {
             if (action === 'start') await startContainer(name);
+            else if (action === 'pause') await pauseContainer(name);
             else if (action === 'stop') await stopContainer(name);
             else if (action === 'restart') await restartContainer(name);
             else if (action === 'delete') await deleteContainer(name);
@@ -160,12 +163,18 @@ export const Containers: React.FC = () => {
                                         <div>
                                             <div className="flex items-center gap-3">
                                                 <h3 className="font-bold text-lg">{container.name}</h3>
-                                                <Badge variant={container.status === 'running' ? 'default' : 'secondary'} className={cn(
+                                                <Badge variant={container.status === 'running' ? 'default' : container.status === 'paused' ? 'outline' : 'secondary'} className={cn(
                                                     "capitalize",
-                                                    container.status === 'running' && "bg-green-500 hover:bg-green-600"
+                                                    container.status === 'running' && "bg-green-500 hover:bg-green-600 text-white",
+                                                    container.status === 'paused' && "border-amber-500 text-amber-600 bg-amber-50"
                                                 )}>
                                                     {container.status}
                                                 </Badge>
+                                                {container.project_id && (
+                                                    <Badge variant="outline" className="text-[10px] bg-primary/5 text-primary border-primary/20">
+                                                        Projet BDD #{container.project_id}
+                                                    </Badge>
+                                                )}
                                             </div>
                                             <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
                                                 <div className="flex items-center gap-1.5">
@@ -211,9 +220,20 @@ export const Containers: React.FC = () => {
                                             <Button
                                                 size="sm"
                                                 variant="outline"
-                                                onClick={() => handleAction(container.name, 'stop')}
+                                                onClick={() => handleAction(container.name, 'pause')}
                                                 disabled={!!actionLoading || container.status !== 'running'}
                                                 className="h-9 gap-2 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200"
+                                            >
+                                                {actionLoading === `${container.name}-pause` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pause className="h-4 w-4" />}
+                                                Pause
+                                            </Button>
+
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() => handleAction(container.name, 'stop')}
+                                                disabled={!!actionLoading || (container.status !== 'running' && container.status !== 'paused')}
+                                                className="h-9 gap-2 hover:bg-orange-50 hover:text-orange-600 hover:border-orange-200"
                                             >
                                                 {actionLoading === `${container.name}-stop` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
                                                 Stop

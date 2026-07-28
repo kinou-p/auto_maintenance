@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+import sys
+
 @dataclass
 class CommandResult:
     """Résultat d'une commande shell."""
@@ -27,6 +29,8 @@ class CommandResult:
         self.success = self.returncode == 0
 
 
+from typing import Optional, Callable, Awaitable
+
 async def run_command(
     command: str | list[str],
     cwd: Optional[str] = None,
@@ -34,26 +38,13 @@ async def run_command(
     env: Optional[dict[str, str]] = None,
     retries: int = 0,
     retry_delay: float = 2.0,
+    on_output: Optional[Callable[[str], Awaitable[None] | None]] = None,
 ) -> CommandResult:
     """
-    Exécute une commande shell de manière asynchrone.
-
-    Args:
-        command: Commande à exécuter (str ou liste d'args).
-        cwd: Répertoire de travail.
-        timeout: Timeout en secondes.
-        env: Variables d'environnement additionnelles.
-        retries: Nombre de tentatives supplémentaires en cas d'échec.
-        retry_delay: Délai entre les tentatives (secondes).
-
-    Returns:
-        CommandResult avec stdout, stderr et code retour.
-
-    Raises:
-        asyncio.TimeoutError: Si la commande dépasse le timeout.
+    Exécute une commande shell de manière asynchrone (compatibilité Windows/Linux/macOS).
     """
     if isinstance(command, str):
-        args = shlex.split(command)
+        args = shlex.split(command, posix=True)
         cmd_str = command
     else:
         args = command
@@ -62,32 +53,117 @@ async def run_command(
     # Résoudre le chemin absolu de l'exécutable
     executable = shutil.which(args[0])
     if not executable:
-        # Fallback si non trouvé (pour les commandes builtin ou si déjà absolu)
+        # Fallback si non trouvé
         executable = args[0]
     
-    # Remplacer la commande par son chemin absolu
     args[0] = executable
 
     last_result: Optional[CommandResult] = None
 
     for attempt in range(retries + 1):
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-                env=env,
-            )
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                    env=env,
+                )
 
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+                stdout_lines = []
+                stderr_lines = []
+
+                async def read_stream(stream, lines_list, is_stdout: bool):
+                    while True:
+                        line = await stream.readline()
+                        if not line:
+                            break
+                        decoded = line.decode("utf-8", errors="replace")
+                        lines_list.append(decoded)
+                        if is_stdout and on_output:
+                            clean_line = decoded.strip()
+                            if clean_line:
+                                res = on_output(clean_line)
+                                if asyncio.iscoroutine(res):
+                                    await res
+
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        read_stream(proc.stdout, stdout_lines, True),
+                        read_stream(proc.stderr, stderr_lines, False),
+                        proc.wait(),
+                    ),
+                    timeout=timeout,
+                )
+
+                returncode = proc.returncode or 0
+                stdout_str = "".join(stdout_lines).strip()
+                stderr_str = "".join(stderr_lines).strip()
+
+            except NotImplementedError:
+                import subprocess, threading
+
+                loop = asyncio.get_running_loop()
+
+                def run_sync():
+                    p = subprocess.Popen(
+                        args,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        cwd=cwd,
+                        env=env,
+                        bufsize=1,
+                    )
+                    out_lines = []
+                    err_lines = []
+
+                    def read_stdout():
+                        if p.stdout:
+                            for line in iter(p.stdout.readline, ''):
+                                out_lines.append(line)
+                                clean = line.strip()
+                                if clean and on_output:
+                                    try:
+                                        if asyncio.iscoroutinefunction(on_output):
+                                            asyncio.run_coroutine_threadsafe(on_output(clean), loop)
+                                        else:
+                                            on_output(clean)
+                                    except Exception:
+                                        pass
+                            p.stdout.close()
+
+                    def read_stderr():
+                        if p.stderr:
+                            for line in iter(p.stderr.readline, ''):
+                                err_lines.append(line)
+                            p.stderr.close()
+
+                    t_out = threading.Thread(target=read_stdout, daemon=True)
+                    t_err = threading.Thread(target=read_stderr, daemon=True)
+                    t_out.start()
+                    t_err.start()
+
+                    try:
+                        p.wait(timeout=timeout)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
+                        return -1, "".join(out_lines), "Command timed out"
+
+                    t_out.join(timeout=5)
+                    t_err.join(timeout=5)
+
+                    return p.returncode, "".join(out_lines), "".join(err_lines)
+
+                returncode, stdout_str, stderr_str = await asyncio.to_thread(run_sync)
 
             result = CommandResult(
-                returncode=proc.returncode or 0,
-                stdout=stdout_bytes.decode("utf-8", errors="replace").strip(),
-                stderr=stderr_bytes.decode("utf-8", errors="replace").strip(),
+                returncode=returncode,
+                stdout=stdout_str,
+                stderr=stderr_str,
                 command=cmd_str,
             )
 
@@ -118,31 +194,22 @@ async def run_ddev_command(
     project_dir: str,
     timeout: int = 120,
     retries: int = 0,
+    on_output: Optional[Callable[[str], Awaitable[None] | None]] = None,
 ) -> CommandResult:
     """
     Exécute une commande DDEV dans le répertoire d'un projet.
-
-    Args:
-        command: Commande DDEV (ex: "ddev start").
-        project_dir: Répertoire du projet DDEV.
-        timeout: Timeout en secondes.
-        retries: Nombre de retries.
     """
-    return await run_command(command, cwd=project_dir, timeout=timeout, retries=retries)
+    return await run_command(command, cwd=project_dir, timeout=timeout, retries=retries, on_output=on_output)
 
 
 async def run_wp_cli(
     wp_command: str,
     project_dir: str,
     timeout: int = 120,
+    on_output: Optional[Callable[[str], Awaitable[None] | None]] = None,
 ) -> CommandResult:
     """
-    Exécute une commande WP-CLI via DDEV.
-
-    Args:
-        wp_command: Commande WP-CLI (sans le préfixe 'wp').
-        project_dir: Répertoire du projet DDEV.
-        timeout: Timeout en secondes.
+    Exécute une commande WP-CLI via DDEV avec retransmission en direct des sorties.
     """
     full_command = f"ddev wp {wp_command}"
-    return await run_command(full_command, cwd=project_dir, timeout=timeout)
+    return await run_command(full_command, cwd=project_dir, timeout=timeout, on_output=on_output)

@@ -18,17 +18,24 @@ from backend.core.config import settings
 from backend.core.websocket import WorkflowLogger
 from backend.utils.command import run_command
 
+import sys
+
 # Marqueurs pour identifier les entrées gérées par l'application
 HOSTS_MARKER_START = "# >>> AUTO_MAINTENANCE MANAGED - DO NOT EDIT >>>"
 HOSTS_MARKER_END = "# <<< AUTO_MAINTENANCE MANAGED <<<"
-HOSTS_FILE = "/etc/hosts"
+
+def get_hosts_file() -> Path:
+    if sys.platform == "win32":
+        return Path(r"C:\Windows\System32\drivers\etc\hosts")
+    return Path("/etc/hosts")
 
 
 class HostsManager:
-    """Gère les modifications de /etc/hosts de manière sécurisée."""
+    """Gère les modifications du fichier hosts de manière sécurisée et cross-platform."""
 
     def __init__(self, logger: Optional[WorkflowLogger] = None) -> None:
         self.logger = logger
+        self.hosts_file = get_hosts_file()
 
     async def _log(self, level: str, message: str) -> None:
         if self.logger:
@@ -37,8 +44,10 @@ class HostsManager:
     # ── Lecture / Parse ───────────────────────────────────────────
 
     def _read_hosts(self) -> str:
-        """Lit le contenu de /etc/hosts."""
-        return Path(HOSTS_FILE).read_text(encoding="utf-8")
+        """Lit le contenu du fichier hosts."""
+        if not self.hosts_file.exists():
+            return ""
+        return self.hosts_file.read_text(encoding="utf-8", errors="replace")
 
     def _get_managed_entries(self, content: str) -> dict[str, str]:
         """
@@ -168,18 +177,32 @@ class HostsManager:
 
     async def _write_hosts(self, content: str) -> bool:
         """
-        Écrit le contenu dans /etc/hosts via la méthode sudo configurée.
-
-        Stratégie :
-        1. Créer un fichier temporaire avec le nouveau contenu
-        2. Utiliser sudo pour copier le fichier temporaire vers /etc/hosts
-        3. Supprimer le fichier temporaire
+        Écrit le contenu dans le fichier hosts de manière sécurisée et cross-platform.
         """
-        # Backup de sécurité
+        hosts_file = get_hosts_file()
+
+        if sys.platform == "win32":
+            try:
+                hosts_file.write_text(content, encoding="utf-8")
+                await self._log("success", "Fichier hosts Windows mis à jour avec succès.")
+                return True
+            except PermissionError:
+                await self._log(
+                    "warning",
+                    "Impossible d'écrire dans C:\\Windows\\System32\\drivers\\etc\\hosts (privilèges Administrateur requis). "
+                    "Remarque: les domaines *.ddev.site résolvent automatiquement vers 127.0.0.1 via DNS.",
+                )
+                # Retourner True car la résolution .ddev.site fonctionne tout de même nativement
+                return True
+            except Exception as e:
+                await self._log("error", f"Erreur d'écriture hosts sous Windows : {e}")
+                return False
+
+        # Sur Linux / macOS
         backup_path = f"/tmp/hosts.backup.{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
-        backup_result = await run_command(f"sudo cp {HOSTS_FILE} {backup_path}")
+        backup_result = await run_command(f"sudo cp {hosts_file} {backup_path}")
         if backup_result.success:
-            await self._log("info", f"Backup de /etc/hosts : {backup_path}")
+            await self._log("info", f"Backup du fichier hosts : {backup_path}")
 
         # Écrire dans un fichier temporaire
         with tempfile.NamedTemporaryFile(mode="w", suffix=".hosts", delete=False) as tmp:
@@ -191,31 +214,28 @@ class HostsManager:
 
             if method == "sudoers":
                 result = await run_command(
-                    f"sudo cp {tmp_path} {HOSTS_FILE}", timeout=10
+                    f"sudo cp {tmp_path} {hosts_file}", timeout=10
                 )
             elif method == "pkexec":
                 result = await run_command(
-                    f"pkexec cp {tmp_path} {HOSTS_FILE}", timeout=30
+                    f"pkexec cp {tmp_path} {hosts_file}", timeout=30
                 )
             else:  # prompt
                 result = await run_command(
-                    f"sudo cp {tmp_path} {HOSTS_FILE}", timeout=30
+                    f"sudo cp {tmp_path} {hosts_file}", timeout=30
                 )
 
             if result.success:
-                # S'assurer que les permissions sont correctes
-                await run_command(f"sudo chmod 644 {HOSTS_FILE}")
-                await self._log("success", "/etc/hosts mis à jour avec succès.")
+                await run_command(f"sudo chmod 644 {hosts_file}")
+                await self._log("success", "Fichier hosts mis à jour avec succès.")
                 return True
             else:
-                await self._log("error", f"Échec de l'écriture de /etc/hosts : {result.stderr}")
-                # Rollback
-                await run_command(f"sudo cp {backup_path} {HOSTS_FILE}")
-                await self._log("info", "Rollback de /etc/hosts effectué.")
+                await self._log("error", f"Échec de l'écriture du fichier hosts : {result.stderr}")
+                await run_command(f"sudo cp {backup_path} {hosts_file}")
+                await self._log("info", "Rollback du fichier hosts effectué.")
                 return False
 
         finally:
-            # Nettoyer le fichier temporaire
             Path(tmp_path).unlink(missing_ok=True)
 
     # ── Sudoers setup ─────────────────────────────────────────────

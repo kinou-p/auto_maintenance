@@ -31,6 +31,7 @@ const STATUS_CONFIG: Record<ProjectStatus, { label: string; variant: 'default' |
   maintenance_done: { label: 'Terminé', variant: 'success' },
   error: { label: 'Erreur', variant: 'destructive' },
   stopped: { label: 'Arrêté', variant: 'outline' },
+  paused: { label: 'En pause', variant: 'warning' },
   deleting: { label: 'Suppression...', variant: 'warning' },
 };
 

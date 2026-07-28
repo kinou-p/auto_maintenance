@@ -28,7 +28,11 @@ from backend.core.config import settings
 
 
 # ── Engine & Session ──────────────────────────────────────────────
-engine = create_async_engine(settings.database_url, echo=settings.app_debug)
+engine = create_async_engine(
+    settings.database_url,
+    echo=settings.app_debug,
+    connect_args={"check_same_thread": False, "timeout": 30.0},
+)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
@@ -48,6 +52,7 @@ class ProjectStatus(str, enum.Enum):
     MAINTENANCE_DONE = "maintenance_done"
     ERROR = "error"
     STOPPED = "stopped"
+    PAUSED = "paused"
     DELETING = "deleting"
 
 
@@ -112,6 +117,7 @@ class Workflow(Base):
     steps_failed: list = Column(JSON, default=list, nullable=False)
     logs: list = Column(JSON, default=list, nullable=False)
     updates_stats: dict = Column(JSON, default=dict, nullable=False)
+    options: dict = Column(JSON, default=dict, nullable=False)
     started_at: Optional[datetime] = Column(DateTime, nullable=True)
     completed_at: Optional[datetime] = Column(DateTime, nullable=True)
     created_at: datetime = Column(
@@ -147,7 +153,10 @@ class VRTReport(Base):
 
 
 # ── Init DB ───────────────────────────────────────────────────────
+from sqlalchemy import text
+
 async def init_db() -> None:
-    """Crée les tables si elles n'existent pas."""
+    """Crée les tables si elles n'existent pas et active le mode WAL pour éviter tout verrouillage."""
     async with engine.begin() as conn:
+        await conn.execute(text("PRAGMA journal_mode=WAL;"))
         await conn.run_sync(Base.metadata.create_all)

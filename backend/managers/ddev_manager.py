@@ -32,20 +32,29 @@ class DDEVManager:
 
     async def check_ddev_installed(self) -> bool:
         """Vérifie que DDEV est installé et accessible."""
-        result = await run_command("ddev version", timeout=10)
-        if not result.success and "permission denied" in (result.stderr or "").lower():
+        result = await run_command("ddev --version", timeout=10)
+        if result.success or "ddev" in result.stdout.lower() or shutil.which("ddev") is not None:
+            return True
+        if "permission denied" in (result.stderr or "").lower():
             await self._log(
                 "error",
                 "DDEV est installé mais Docker n'est pas accessible. "
                 "Vérifiez que votre utilisateur est dans le groupe 'docker' : "
                 "sudo usermod -aG docker $USER (puis re-login).",
             )
-        return result.success
+        return False
 
     async def check_docker_running(self) -> bool:
-        """Vérifie que Docker est en cours d'exécution."""
-        result = await run_command("docker info", timeout=10)
-        return result.success
+        """Vérifie que Docker est en cours d'exécution (avec retries si Docker est en cours de démarrage)."""
+        import asyncio
+        for attempt in range(5):
+            result = await run_command("docker info", timeout=10)
+            if result.success:
+                return True
+            if attempt < 4:
+                await self._log("info", f"En attente de la stabilisation du daemon Docker ({attempt + 1}/5)...")
+                await asyncio.sleep(4)
+        return False
 
     async def project_exists(self) -> bool:
         """Vérifie si le projet DDEV existe déjà."""
@@ -98,6 +107,7 @@ class DDEVManager:
             f" --webserver-type={settings.ddev_webserver_type}"
             f" --database=mariadb:{settings.ddev_mariadb_version}"
             f" --additional-fqdns={fqdns_str}"
+            f" --performance-mode=none"
             f" --docroot=."
             f" --upload-dirs=wp-content/uploads"
         )
@@ -106,8 +116,9 @@ class DDEVManager:
 
         if result.success:
             await self._log("success", f"Projet DDEV configuré avec succès (domaine: {fqdn})")
-            # Écrire une config supplémentaire pour augmenter les limites PHP
+            # Écrire une config supplémentaire pour augmenter les limites PHP et MariaDB
             await self._write_php_config()
+            await self._write_mysql_config()
         else:
             await self._log("error", f"Échec de la configuration DDEV : {result.stderr}")
 
@@ -122,12 +133,26 @@ class DDEVManager:
             "[PHP]\n"
             "upload_max_filesize = 2G\n"
             "post_max_size = 2G\n"
-            "memory_limit = 512M\n"
-            "max_execution_time = 600\n"
-            "max_input_time = 600\n"
-            "max_input_vars = 5000\n"
+            "memory_limit = 2048M\n"
+            "max_execution_time = 0\n"
+            "max_input_time = 0\n"
+            "max_input_vars = 10000\n"
         )
-        await self._log("info", "Configuration PHP personnalisée appliquée (upload 2G, memory 512M)")
+        await self._log("info", "Configuration PHP personnalisée appliquée (upload 2G, memory 2G)")
+
+    async def _write_mysql_config(self) -> None:
+        """Écrit une configuration MariaDB ultra-rapide (désactivation fsync synchrone lors de la restauration)."""
+        mysql_dir = self.project_dir / ".ddev" / "mysql"
+        mysql_dir.mkdir(parents=True, exist_ok=True)
+        mysql_cnf = mysql_dir / "speed.cnf"
+        mysql_cnf.write_text(
+            "[mysqld]\n"
+            "innodb_flush_log_at_trx_commit = 2\n"
+            "innodb_doublewrite = 0\n"
+            "max_allowed_packet = 1G\n"
+            "innodb_buffer_pool_size = 512M\n"
+        )
+        await self._log("info", "Configuration MariaDB optimisée (fast transaction log applied)")
 
     async def start(self) -> CommandResult:
         """Démarre les conteneurs DDEV du projet."""
@@ -150,6 +175,18 @@ class DDEVManager:
             await self._log("success", "Conteneurs DDEV arrêtés.")
         else:
             await self._log("warning", f"Problème à l'arrêt DDEV : {result.stderr}")
+
+        return result
+
+    async def pause(self) -> CommandResult:
+        """Met en pause les conteneurs DDEV du projet."""
+        await self._log("info", "Mise en pause des conteneurs DDEV...")
+        result = await run_ddev_command("ddev pause", str(self.project_dir), timeout=60)
+
+        if result.success:
+            await self._log("success", "Conteneurs DDEV mis en pause.")
+        else:
+            await self._log("warning", f"Problème à la mise en pause DDEV : {result.stderr}")
 
         return result
 
@@ -211,6 +248,9 @@ class DDEVManager:
 
     async def get_status(self) -> dict:
         """Récupère le statut du projet DDEV."""
+        if not await self.project_exists():
+            return {"running": False, "status": "not_created", "data": None, "urls": []}
+
         result = await run_ddev_command(
             "ddev describe -j", str(self.project_dir), timeout=15
         )
@@ -218,14 +258,18 @@ class DDEVManager:
             import json
             try:
                 data = json.loads(result.stdout)
+                raw = data.get("raw", {})
+                status_str = raw.get("status", "stopped")
+                is_running = status_str in ("running", "OK")
                 return {
-                    "running": True,
+                    "running": is_running,
+                    "status": status_str,
                     "data": data,
-                    "urls": data.get("raw", {}).get("urls", []),
+                    "urls": raw.get("urls", []),
                 }
             except json.JSONDecodeError:
                 pass
-        return {"running": False, "data": None, "urls": []}
+        return {"running": False, "status": "stopped", "data": None, "urls": []}
 
     async def get_url(self) -> str:
         """Retourne l'URL principale du projet DDEV."""
@@ -244,15 +288,35 @@ class DDEVManager:
         )
 
     async def copy_to_container(self, local_path: str, container_path: str) -> CommandResult:
-        """Copie un fichier local dans le conteneur DDEV."""
+        """Copie un fichier local dans le répertoire du projet DDEV (monté sur /var/www/html)."""
+        import os
         await self._log("info", f"Copie de {local_path} vers le conteneur...")
-        # Utiliser docker cp via ddev
-        result = await run_command(
-            f"docker cp {local_path} ddev-{self.project_name}-web:{container_path}",
-            timeout=300
-        )
-        if result.success:
-            await self._log("success", f"Fichier copié dans le conteneur ({container_path})")
-        else:
-            await self._log("error", f"Échec de la copie : {result.stderr}")
-        return result
+
+        src = Path(local_path)
+        if not src.exists():
+            err_msg = f"Fichier local introuvable : {local_path}"
+            await self._log("error", err_msg)
+            return CommandResult(returncode=1, stdout="", stderr=err_msg, command="copy_file")
+
+        try:
+            rel_path = container_path
+            if rel_path.startswith("/var/www/html/"):
+                rel_path = rel_path[len("/var/www/html/"):]
+            elif rel_path.startswith("/tmp/"):
+                rel_path = rel_path[len("/tmp/"):]
+
+            rel_path = rel_path.lstrip("/").replace("/", os.sep)
+            dest = self.project_dir / rel_path
+
+            if container_path.endswith("/") or container_path.endswith("\\"):
+                dest = dest / src.name
+
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+
+            await self._log("success", f"Fichier copié dans le conteneur ({src.name})")
+            return CommandResult(returncode=0, stdout=f"Copie réussie vers {dest}", stderr="", command="copy_file")
+        except Exception as e:
+            err_msg = f"Échec de la copie : {e}"
+            await self._log("error", err_msg)
+            return CommandResult(returncode=1, stdout="", stderr=err_msg, command="copy_file")
