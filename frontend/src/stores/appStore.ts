@@ -71,6 +71,8 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set, get) => ({
   // Projects
+  projects: [],
+  currentProject: null,
   setProjects: (projects) => {
     const current = get().currentProject;
     if (current) {
