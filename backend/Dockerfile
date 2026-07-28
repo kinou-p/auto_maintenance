@@ -35,7 +35,7 @@ RUN chown -R pwuser:pwuser /app
 
 USER pwuser
 
-RUN ddev config global --docker-buildx-version=0.35.0 --router-http-port=8088 --router-https-port=8443
+RUN ddev config global --docker-buildx-version=0.35.0 --router-http-port=8088 --router-https-port=8443 --router-bind-all-interfaces=true
 
 EXPOSE 8000
 
