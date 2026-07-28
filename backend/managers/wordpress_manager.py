@@ -626,8 +626,11 @@ class WordPressManager:
         if unlimited_dir.exists():
             shutil.rmtree(unlimited_dir, ignore_errors=True)
 
-        await run_wp_cli("plugin activate --all", str(self.project_dir))
-        await self._log("info", "Extensions du site activées avec succès.", step="wpress_import")
+        act_result = await run_wp_cli("plugin activate --all --continue-on-error", str(self.project_dir))
+        if act_result.success:
+            await self._log("info", "Extensions du site activées avec succès.", step="wpress_import")
+        else:
+            await self._log("warning", f"Activation des extensions partielle : {act_result.stderr[:300]}", step="wpress_import")
 
 
 
@@ -649,6 +652,12 @@ class WordPressManager:
         except Exception:
             pass
 
+        await self._log(
+            "info",
+            f"[DEBUG] Thème actif : {active_themes} | WP-CLI stdout: '{theme_result.stdout.strip()[:100]}'",
+            step="wpress_import",
+        )
+
         if not active_themes:
             await self._log(
                 "warning",
@@ -658,17 +667,28 @@ class WordPressManager:
             all_themes_res = await run_wp_cli("theme list --format=json", str(self.project_dir))
             try:
                 all_themes = json.loads(all_themes_res.stdout)
-                if all_themes:
-                    fallback_theme = all_themes[0].get("name")
+                # Préférer le thème qui n'est pas twentytwenty* si possible
+                custom_themes = [t for t in all_themes if not t.get("name", "").startswith("twenty")]
+                candidate_themes = custom_themes if custom_themes else all_themes
+                if candidate_themes:
+                    fallback_theme = candidate_themes[0].get("name")
                     if fallback_theme:
-                        await run_wp_cli(f"theme activate {fallback_theme}", str(self.project_dir))
-                        await self._log(
-                            "success",
-                            f"Thème '{fallback_theme}' activé avec succès.",
-                            step="wpress_import",
-                        )
+                        activate_res = await run_wp_cli(f"theme activate {fallback_theme}", str(self.project_dir))
+                        if activate_res.success:
+                            await self._log(
+                                "success",
+                                f"Thème '{fallback_theme}' activé avec succès.",
+                                step="wpress_import",
+                            )
+                        else:
+                            await self._log(
+                                "warning",
+                                f"Échec activation thème '{fallback_theme}' : {activate_res.stderr[:200]}",
+                                step="wpress_import",
+                            )
             except Exception as e:
                 await self._log("warning", f"Impossible d'activer un thème de secours : {e}", step="wpress_import")
+
 
         # ── 8. Vérifier que le site répond correctement ──
 

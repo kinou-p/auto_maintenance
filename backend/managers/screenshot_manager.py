@@ -167,11 +167,13 @@ class ScreenshotManager:
                     results.extend(pr)
 
         except ImportError:
-            await self._log("error", "Playwright n'est pas installé.", step=step)
-            raise
+            await self._log("error", "Playwright n'est pas installé. Screenshots ignorés.", step=step)
+            return []
         except Exception as e:
-            await self._log("error", f"Erreur lors de la capture : {e}", step=step)
-            raise
+            import traceback
+            tb = traceback.format_exc()
+            await self._log("error", f"Erreur lors de la capture : {type(e).__name__}: {e}\n{tb[-500:]}", step=step)
+            return []
 
         await self._log(
             "success",
