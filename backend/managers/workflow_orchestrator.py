@@ -448,54 +448,69 @@ class WorkflowOrchestrator:
                 await session.commit()
 
     async def _step_screenshots(self, phase: str) -> None:
-        """Étape 6/9 : Capture des screenshots."""
+        """Étape 6/9 : Capture des screenshots (non-bloquant)."""
         assert self._wp is not None
         assert self._screenshots is not None
 
-        # Vérifier que le site est accessible avant de capturer
-        site_url = await self._wp.ddev.get_url()
-        import httpx
+        step = f"screenshots_{phase}"
+
         try:
-            async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
-                response = await client.get(site_url)
-                if response.status_code != 200:
-                    await self.logger.warning(
-                        f"Le site répond avec le code {response.status_code}. "
-                        f"Les screenshots pourraient être incorrects.",
-                        step=f"screenshots_{phase}",
-                    )
-                else:
-                    # Vérifier la présence de CSS dans le HTML (link ou style inline)
-
-                    body = response.text
-                    has_css = ('<link' in body and ('stylesheet' in body or '.css' in body)) or '<style' in body
-                    if not has_css:
+            # Vérifier que le site est accessible avant de capturer
+            site_url = await self._wp.ddev.get_url()
+            import httpx
+            try:
+                async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
+                    response = await client.get(site_url)
+                    if response.status_code != 200:
                         await self.logger.warning(
-                            "Aucune feuille de style CSS ou balise <style> détectée dans le HTML. "
-                            "Les screenshots risquent de montrer du HTML brut.",
-                            step=f"screenshots_{phase}",
+                            f"Le site répond avec le code {response.status_code}. "
+                            f"Les screenshots pourraient être incorrects.",
+                            step=step,
                         )
+                    else:
+                        body = response.text
+                        has_css = ('<link' in body and ('stylesheet' in body or '.css' in body)) or '<style' in body
+                        if not has_css:
+                            await self.logger.warning(
+                                "Aucune feuille de style CSS ou balise <style> détectée dans le HTML. "
+                                "Les screenshots risquent de montrer du HTML brut.",
+                                step=step,
+                            )
+            except Exception as e:
+                await self.logger.warning(
+                    f"Impossible de vérifier l'accessibilité du site : {e}",
+                    step=step,
+                )
+
+            pages = await self._wp.get_page_info()
+            if not pages:
+                await self.logger.warning(
+                    f"Aucune page trouvée pour les screenshots ({phase}).",
+                    step=step,
+                )
+                return
+
+            page_names = [p.get("name", "page") for p in pages]
+            await self.logger.info(
+                f"🔍 {len(pages)} page(s) détectée(s) pour la capture ({phase}) : {', '.join(page_names)}",
+                step=step,
+            )
+
+            results = await self._screenshots.capture_screenshots(pages, phase)
+            await self.logger.info(
+                f"{len(results)} screenshot(s) capturé(s) ({phase}).",
+                step=step,
+            )
+
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
             await self.logger.warning(
-                f"Impossible de vérifier l'accessibilité du site : {e}",
-                step=f"screenshots_{phase}",
+                f"Screenshots ({phase}) ignorés (erreur non-bloquante) : {type(e).__name__}: {e}\n{tb[-800:]}",
+                step=step,
             )
+            # Non-bloquant : on ne re-lève pas l'exception
 
-        pages = await self._wp.get_page_info()
-        if not pages:
-            await self.logger.warning(
-                f"Aucune page trouvée pour les screenshots ({phase}).",
-                step=f"screenshots_{phase}",
-            )
-            return
-
-        page_names = [p.get("name", "page") for p in pages]
-        await self.logger.info(
-            f"🔍 {len(pages)} page(s) détectée(s) pour la capture ({phase}) : {', '.join(page_names)}",
-            step=f"screenshots_{phase}",
-        )
-
-        await self._screenshots.capture_screenshots(pages, phase)
 
     async def _step_updates_list(self) -> None:
         """Étape 7 : Liste des mises à jour disponibles."""
