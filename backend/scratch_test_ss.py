@@ -11,11 +11,11 @@ async def test():
         b = await p.chromium.launch(headless=True)
         c = await b.new_context(ignore_https_errors=True)
         page = await c.new_page()
-        # Test avec Host header en minuscules vs Host
-        await page.set_extra_http_headers({"host": "larochelleportscenter-com-20260726-221202-950.ddev.site:8088"})
+        # Test avec header custom X-Host
+        await page.set_extra_http_headers({"x-forwarded-host": "larochelleportscenter-com-20260726-221202-950.ddev.site:8088"})
         try:
             target = "http://172.17.0.1:8088/acteurs-du-territoire/"
-            print("Navigating to IP with lowercase host header:", target)
+            print("Navigating to IP with x-forwarded-host:", target)
             res = await page.goto(target, timeout=10000)
             print("PAGE GOTO RESPONSE:", res.status if res else "None")
         except Exception as e:
