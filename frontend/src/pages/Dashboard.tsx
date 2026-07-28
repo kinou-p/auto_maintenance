@@ -105,6 +105,7 @@ export function Dashboard() {
 
   useEffect(() => {
     if (currentProject) {
+      setShowLogs(true);
       if (searchParams.get('project') !== String(currentProject.id)) {
         setSearchParams({ project: String(currentProject.id) }, { replace: true });
       }
@@ -116,7 +117,7 @@ export function Dashboard() {
   const [health, setHealth] = useState<{ ddev: boolean; docker: boolean } | null>(null);
   const [ddevStatus, setDdevStatus] = useState<string>('unknown');
   const [logPanelHeight, setLogPanelHeight] = useState(256);
-  const [showLogs, setShowLogs] = useState(false);
+  const [showLogs, setShowLogs] = useState(true);
   const [globalViewMode, setGlobalViewMode] = useState<'slider' | 'side-by-side' | 'diff'>(() => {
     const stored = localStorage.getItem('vrt_view_mode');
     return (stored as 'slider' | 'side-by-side' | 'diff') || 'slider';
