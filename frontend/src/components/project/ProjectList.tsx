@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { getProjects, deleteProject, deleteProjectsBatch, startBatchWorkflows, resetProject } from '@/lib/api';
+import { getProjects, deleteProject, deleteProjectsBatch, startBatchWorkflows, resetProject, startWorkflow } from '@/lib/api';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -37,9 +37,9 @@ interface ProjectListProps {
 }
 
 export function ProjectList({ onToast }: ProjectListProps) {
-  const { projects, setProjects, currentProject, setCurrentProject } = useAppStore();
+  const { projects, setProjects, currentProject, setCurrentProject, setCurrentWorkflow } = useAppStore();
   const [loading, setLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState<{ projectId: number; action: 'delete' | 'reset' } | null>(null);
+  const [actionLoading, setActionLoading] = useState<{ projectId: number; action: 'delete' | 'reset' | 'start' } | null>(null);
   const [selectedProjects, setSelectedProjects] = useState<Set<number>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
@@ -222,6 +222,21 @@ export function ProjectList({ onToast }: ProjectListProps) {
     } catch (err) {
       console.error('Error resetting project:', err);
       onToast?.('Erreur lors de la réinitialisation', 'destructive');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleStartWorkflow = async (project: Project) => {
+    setActionLoading({ projectId: project.id, action: 'start' });
+    try {
+      const workflow = await startWorkflow(project.id);
+      setCurrentWorkflow(workflow);
+      window.dispatchEvent(new CustomEvent('app:queue_updated'));
+      onToast?.(`Maintenance lancée pour "${project.name}"`, 'success');
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Impossible de lancer la maintenance.';
+      onToast?.(errMsg, 'warning');
     } finally {
       setActionLoading(null);
     }
@@ -435,6 +450,22 @@ export function ProjectList({ onToast }: ProjectListProps) {
 
                 {isSelected && !isDeleting && !selectionMode && (
                   <div className="flex items-center justify-end gap-1.5 mt-3 pt-2 border-t border-border/50 animate-in fade-in duration-200">
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="h-7 px-2 text-xs bg-primary hover:bg-primary/90 text-primary-foreground shadow-xs"
+                      onClick={(e) => { e.stopPropagation(); handleStartWorkflow(project); }}
+                      title="Lancer la maintenance (ou ajouter à la file)"
+                      disabled={actionLoading?.projectId === project.id}
+                    >
+                      {actionLoading?.projectId === project.id && actionLoading.action === 'start' ? (
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Play className="h-3.5 w-3.5 mr-1 fill-current" />
+                      )}
+                      Lancer
+                    </Button>
+
                     <Button
                       variant="outline"
                       size="sm"

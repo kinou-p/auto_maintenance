@@ -56,6 +56,7 @@ import {
   MoreVertical,
   ImageOff,
   Bell,
+  FolderOpen,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
@@ -489,6 +490,18 @@ export function Dashboard() {
                   {queueInfo.total_active + queueInfo.total_pending}
                 </Badge>
               )}
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              asChild
+              className="h-8 text-xs px-2"
+            >
+              <Link to="/projects">
+                <FolderOpen className="mr-1.5 h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Projets</span>
+              </Link>
             </Button>
 
             <Button
