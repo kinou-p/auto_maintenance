@@ -175,8 +175,6 @@ export function ProjectList() {
 
   const handleDelete = async (project: Project) => {
     console.log('[CLICK] ProjectList handleDelete triggered', project);
-    if (!window.confirm(`Supprimer définitivement le projet ${project.name} ?`)) return;
-
     setActionLoading({ projectId: project.id, action: 'delete' });
     try {
       await deleteProject(project.id);
@@ -193,8 +191,6 @@ export function ProjectList() {
 
   const handleReset = async (project: Project) => {
     console.log('[CLICK] ProjectList handleReset triggered', project);
-    if (!window.confirm(`Réinitialiser le projet "${project.name}" ?\nLe conteneur DDEV et les rapports seront supprimés, et le statut repassera à 'Créé' (le fichier .wpress est conservé).`)) return;
-
     setActionLoading({ projectId: project.id, action: 'reset' });
     try {
       await resetProject(project.id);

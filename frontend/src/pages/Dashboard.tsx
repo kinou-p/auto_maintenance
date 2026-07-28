@@ -232,7 +232,6 @@ export function Dashboard() {
       alert('Aucun projet sélectionné !');
       return;
     }
-    if (!window.confirm(`Lancer la procédure complète de maintenance pour "${currentProject.name}" ?`)) return;
     setWorkflowLoading(true);
     clearLogs();
 
@@ -331,7 +330,6 @@ export function Dashboard() {
 
   const handlePauseProject = async () => {
     if (!currentProject) return;
-    if (!confirm(`Mettre en pause le projet ${currentProject.name} ?`)) return;
     setWorkflowLoading(true);
     try {
       await pauseProject(currentProject.id);
@@ -345,7 +343,6 @@ export function Dashboard() {
 
   const handleStopProject = async () => {
     if (!currentProject) return;
-    if (!confirm(`Arrêter les conteneurs du projet ${currentProject.name} ?`)) return;
     setWorkflowLoading(true);
     try {
       await stopProject(currentProject.id);
@@ -359,7 +356,6 @@ export function Dashboard() {
 
   const handleRestartProject = async () => {
     if (!currentProject) return;
-    if (!confirm(`Redémarrer les conteneurs DDEV du projet ${currentProject.name} ?`)) return;
     setWorkflowLoading(true);
     try {
       await restartProject(currentProject.id);
@@ -373,9 +369,6 @@ export function Dashboard() {
 
   const handleRecreateProject = async () => {
     if (!currentProject) return;
-    if (!confirm(`Recréer complètement l'environnement DDEV pour ${currentProject.name} ? Les fichiers seront préservés.`)) {
-      return;
-    }
     setWorkflowLoading(true);
     try {
       await recreateProject(currentProject.id);
@@ -389,9 +382,7 @@ export function Dashboard() {
 
   const handleResetProject = async () => {
     if (!currentProject) return;
-    if (!confirm(`Réinitialiser le projet "${currentProject.name}" ?\nLe conteneur DDEV, les screenshots et les rapports seront supprimés, et le statut repassera à 'Créé' sans toucher au fichier .wpress.`)) {
-      return;
-    }
+    console.log('[CLICK] handleResetProject triggered', currentProject);
     setWorkflowLoading(true);
     try {
       await resetProject(currentProject.id);
