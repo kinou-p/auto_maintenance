@@ -239,6 +239,7 @@ async def cancel_workflow(workflow_id: int) -> StatusResponse:
     orchestrator = get_active_workflow(workflow_id)
     if orchestrator:
         orchestrator.cancel()
+        await ws_manager.broadcast({"type": "queue_updated"})
         return StatusResponse(status="success", message="Demande d'annulation envoyée pour le workflow en cours.")
 
     # 2. Sinon, vérifier s'il est en attente dans la DB et le marquer CANCELLED
@@ -248,6 +249,7 @@ async def cancel_workflow(workflow_id: int) -> StatusResponse:
             workflow.status = WorkflowStatus.CANCELLED
             workflow.completed_at = datetime.now(timezone.utc)
             await session.commit()
+            await ws_manager.broadcast({"type": "queue_updated"})
             return StatusResponse(status="success", message="Workflow en attente annulé.")
             
     raise HTTPException(404, "Aucun workflow actif ou en attente avec cet ID.")
