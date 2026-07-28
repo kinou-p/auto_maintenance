@@ -64,8 +64,11 @@ export function ProjectList() {
     };
 
     window.addEventListener('app:queue_updated', handleQueueUpdated);
+    const interval = setInterval(fetchProjects, 3000);
+
     return () => {
       window.removeEventListener('app:queue_updated', handleQueueUpdated);
+      clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
