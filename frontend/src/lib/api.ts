@@ -192,6 +192,12 @@ export const recreateProject = (id: number) =>
     timeout: 300000, // 5 min pour le recreate complet
   });
 
+export const resetProject = (id: number) =>
+  apiFetch<{ status: string; message: string }>(`/projects/${id}/reset`, {
+    method: 'POST',
+    timeout: 120000,
+  });
+
 // ── Workflows ────────────────────────────────────────────────────
 export const startWorkflow = (
   projectId: number,

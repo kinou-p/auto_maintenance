@@ -663,3 +663,51 @@ async def recreate_project(project_id: int) -> StatusResponse:
         project.status = ProjectStatus.ERROR
         await session.commit()
         raise HTTPException(500, f"Impossible de recréer le projet : {result.stderr}")
+
+
+@router.post("/{project_id}/reset", response_model=StatusResponse)
+async def reset_project(project_id: int) -> StatusResponse:
+    """
+    Réinitialise un projet :
+    - Arrête et détruit son conteneur DDEV (s'il existe)
+    - Supprime ses screenshots, rapports et logs de workflows
+    - Remet son statut BDD à 'created' (gardant le projet et son fichier .wpress intacts)
+    """
+    async with async_session() as session:
+        project = await session.get(Project, project_id)
+        if not project:
+            raise HTTPException(404, f"Projet {project_id} introuvable.")
+
+        project_name = project.name
+
+        # 1. Annuler les workflows actifs
+        running_workflow_result = await session.execute(
+            select(Workflow).where(
+                Workflow.project_id == project_id,
+                Workflow.status.in_([WorkflowStatus.RUNNING, WorkflowStatus.PENDING]),
+            )
+        )
+        for wf in running_workflow_result.scalars().all():
+            orchestrator = get_active_workflow(wf.id)
+            if orchestrator:
+                orchestrator.cancel()
+            wf.status = WorkflowStatus.CANCELLED
+            wf.completed_at = datetime.now(timezone.utc)
+
+        # 2. Détruire le conteneur DDEV
+        ddev = DDEVManager(project_name)
+        if await ddev.project_exists():
+            await ddev.destroy(remove_files=True)
+
+        # 3. Nettoyer les screenshots et rapports
+        for subdir in ["screenshots", "reports"]:
+            data_dir = settings.data_dir / subdir / project_name
+            if data_dir.exists():
+                shutil.rmtree(data_dir, ignore_errors=True)
+
+        # 4. Remettre le statut à CREATED
+        project.status = ProjectStatus.CREATED
+        await session.commit()
+
+    await ws_manager.broadcast({"type": "queue_updated"})
+    return StatusResponse(status="success", message=f"Projet '{project_name}' réinitialisé au statut initial (CREATED).")

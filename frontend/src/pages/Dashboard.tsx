@@ -17,6 +17,7 @@ import {
   stopProject,
   restartProject,
   recreateProject,
+  resetProject,
   getProjectStatus,
   getProjects,
   getWorkflowQueue,
@@ -51,6 +52,7 @@ import {
   StopCircle,
   Hammer,
   Clock,
+  RefreshCw,
 } from 'lucide-react';
 
 
@@ -381,6 +383,23 @@ export function Dashboard() {
     }
   };
 
+  const handleResetProject = async () => {
+    if (!currentProject) return;
+    if (!confirm(`Réinitialiser le projet "${currentProject.name}" ?\nLe conteneur DDEV, les screenshots et les rapports seront supprimés, et le statut repassera à 'Créé' sans toucher au fichier .wpress.`)) {
+      return;
+    }
+    setWorkflowLoading(true);
+    try {
+      await resetProject(currentProject.id);
+      clearLogs();
+      await refreshProjectState();
+    } catch (err) {
+      console.error('Error resetting project:', err);
+    } finally {
+      setWorkflowLoading(false);
+    }
+  };
+
   const handleCancelWorkflow = async () => {
     if (!currentWorkflow) return;
     if (!confirm(`Interrompre et annuler la maintenance en cours pour le projet ?`)) return;
@@ -590,6 +609,18 @@ export function Dashboard() {
                           className="text-purple-600 border-purple-200 hover:bg-purple-50"
                         >
                           <Hammer className="h-4 w-4" />
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleResetProject}
+                          disabled={workflowLoading}
+                          title="Réinitialiser le projet (Remet le statut à 'Créé', détruit le conteneur et nettoie les logs sans toucher au fichier .wpress)"
+                          className="text-rose-600 border-rose-200 hover:bg-rose-50"
+                        >
+                          <RefreshCw className="h-4 w-4" />
+                          <span className="hidden xl:inline ml-1 text-xs">Reset</span>
                         </Button>
                       </>
                     )}
