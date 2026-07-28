@@ -626,11 +626,19 @@ class WordPressManager:
         if unlimited_dir.exists():
             shutil.rmtree(unlimited_dir, ignore_errors=True)
 
-        act_result = await run_wp_cli("plugin activate --all --continue-on-error", str(self.project_dir))
+        act_result = await run_wp_cli("plugin activate --all", str(self.project_dir))
         if act_result.success:
             await self._log("info", "Extensions du site activées avec succès.", step="wpress_import")
         else:
-            await self._log("warning", f"Activation des extensions partielle : {act_result.stderr[:300]}", step="wpress_import")
+            await self._log("warning", f"Activation globale des extensions partielle, tentative plugin par plugin : {act_result.stderr[:200]}", step="wpress_import")
+            # Tenter d'activer chaque plugin individuellement
+            plugins_res = await run_wp_cli("plugin list --field=name", str(self.project_dir))
+            if plugins_res.success:
+                p_names = [p.strip() for p in plugins_res.stdout.splitlines() if p.strip()]
+                for p_name in p_names:
+                    await run_wp_cli(f"plugin activate {p_name}", str(self.project_dir))
+            await self._log("info", "Activation individuelle des extensions terminée.", step="wpress_import")
+
 
 
 
