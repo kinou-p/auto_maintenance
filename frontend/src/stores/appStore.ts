@@ -83,6 +83,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   setCurrentProject: (project) => {
+    const current = get().currentProject;
+    // Si c'est déjà le même projet, ne pas réinitialiser les logs et le workflow
+    if (current && project && current.id === project.id) {
+      set({ currentProject: project });
+      return;
+    }
     // Charger les logs sauvegardés du projet sélectionné
     const logs = project ? getStoredLogs(project.id) : [];
     set({
