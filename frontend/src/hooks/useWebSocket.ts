@@ -1,21 +1,12 @@
-/**
- * Hook WebSocket pour la réception des logs en temps réel.
- *
- * Gère la connexion, la reconnexion automatique et la prévention
- * des connexions zombies (React StrictMode, changement de projet).
- */
-
 import { useEffect, useRef } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import type { LogMessage } from '@/types';
 
 export function useWebSocket(projectId?: number) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // Flag pour empêcher les reconnexions zombies après cleanup
+  const heartbeatTimer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const disposed = useRef(false);
 
-  // Utiliser des refs stables pour les fonctions du store
   const storeRef = useRef(useAppStore.getState());
   storeRef.current = useAppStore.getState();
 
@@ -23,14 +14,12 @@ export function useWebSocket(projectId?: number) {
     disposed.current = false;
 
     function connect() {
-      // Ne pas reconnecter si le hook a été nettoyé
       if (disposed.current) return;
 
-      // Fermer toute connexion existante proprement
       if (wsRef.current) {
         const old = wsRef.current;
         wsRef.current = null;
-        old.onclose = null; // Empêcher la reconnexion auto
+        old.onclose = null;
         old.close();
       }
 
@@ -45,7 +34,12 @@ export function useWebSocket(projectId?: number) {
       ws.onopen = () => {
         if (disposed.current) { ws.close(); return; }
         storeRef.current.setWsConnected(true);
-        console.log(`[WS] Connecté (${path})`);
+        clearInterval(heartbeatTimer.current);
+        heartbeatTimer.current = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send('ping');
+          }
+        }, 25000);
       };
 
       ws.onmessage = (event) => {
@@ -60,7 +54,6 @@ export function useWebSocket(projectId?: number) {
           if (data.type === 'progress') {
             state.setProgress(data.progress, data.step);
           } else if (data.type === 'step_completed') {
-            // Mise à jour en temps réel des étapes complétées/échouées
             const currentWorkflow = state.currentWorkflow;
             if (currentWorkflow && currentWorkflow.id === data.workflow_id) {
               state.setCurrentWorkflow({
@@ -71,60 +64,70 @@ export function useWebSocket(projectId?: number) {
               });
             }
           } else if (data.type === 'workflow_status') {
-            // Événement de changement de statut du workflow
             const currentWorkflow = state.currentWorkflow;
             if (currentWorkflow && currentWorkflow.id === data.workflow_id) {
-              // Mettre à jour le workflow actuel
               state.setCurrentWorkflow({
                 ...currentWorkflow,
                 status: data.status,
               });
             }
 
-            // Mettre à jour le statut du projet concerné
             if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
               const project = state.projects.find(p => p.id === data.project_id);
               if (project) {
-                const newStatus = data.completed ? 'maintenance_done' : 'error';
-                state.updateProject({ ...project, status: newStatus });
+                let newStatus: string;
+                if (data.status === 'cancelled') {
+                  newStatus = 'ready';
+                } else if (data.status === 'completed' && data.completed) {
+                  newStatus = 'maintenance_done';
+                } else {
+                  newStatus = 'error';
+                }
+                state.updateProject({ ...project, status: newStatus as typeof project.status });
               }
+              window.dispatchEvent(new CustomEvent('app:vrt_refresh'));
             } else if (data.status === 'running') {
-              // Si le workflow démarre, mettre le projet en maintenance
               const project = state.projects.find(p => p.id === data.project_id);
               if (project && project.status !== 'maintenance_in_progress') {
                 state.updateProject({ ...project, status: 'maintenance_in_progress' });
               }
             }
           } else if (data.type === 'project_deletion') {
-            // Événement de suppression de projet
             if (data.status === 'completed') {
-              // Retirer le projet de la liste
               state.removeProject(data.project_id);
             } else if (data.status === 'failed') {
-              // Marquer le projet comme en erreur
               const project = state.projects.find(p => p.id === data.project_id);
               if (project) {
                 state.updateProject({ ...project, status: 'error' });
               }
             }
-            // Logger le message de suppression
             state.addLog({
+              type: 'log',
               timestamp: new Date().toISOString(),
               level: data.status === 'failed' ? 'error' : 'info',
-              message: data.message,
+              message: data.message || '',
               step: 'deletion',
-            } as LogMessage);
-          } else if (data.type === 'updates_results' || data.type === 'vrt_report' || data.type === 'updates_available') {
-            // Messages de données structurées - ignorer (gérés via API)
+              details: null,
+              progress: null,
+              project_id: data.project_id || 0,
+              workflow_id: 0,
+            });
+          } else if (data.type === 'vrt_report') {
+            window.dispatchEvent(new CustomEvent('app:vrt_refresh'));
+          } else if (data.type === 'updates_results' || data.type === 'updates_available') {
             console.log(`[WS] ${data.type} reçu:`, data);
           } else if (data.type === 'log' || data.level) {
-            // Messages de logs avec timestamp
             state.addLog({
+              type: 'log',
               timestamp: data.timestamp || new Date().toISOString(),
               level: data.level || 'info',
               message: data.message || '',
-              step: data.step,
-            } as LogMessage);
+              step: data.step || null,
+              details: null,
+              progress: null,
+              project_id: data.project_id || 0,
+              workflow_id: data.workflow_id || 0,
+            });
           }
         } catch (err) {
           console.warn('[WS] Erreur de parsing ou de traitement:', err);
@@ -132,10 +135,9 @@ export function useWebSocket(projectId?: number) {
       };
 
       ws.onclose = () => {
+        clearInterval(heartbeatTimer.current);
         storeRef.current.setWsConnected(false);
-        // Ne pas reconnecter si le hook a été nettoyé
         if (!disposed.current) {
-          console.log('[WS] Déconnecté, reconnexion dans 3s...');
           reconnectTimer.current = setTimeout(connect, 3000);
         }
       };
@@ -151,10 +153,11 @@ export function useWebSocket(projectId?: number) {
     return () => {
       disposed.current = true;
       clearTimeout(reconnectTimer.current);
+      clearInterval(heartbeatTimer.current);
       if (wsRef.current) {
         const ws = wsRef.current;
         wsRef.current = null;
-        ws.onclose = null; // Empêcher la reconnexion zombie
+        ws.onclose = null;
         ws.close();
       }
       storeRef.current.setWsConnected(false);

@@ -26,10 +26,13 @@ import {
     restartContainer,
     deleteContainer,
 } from '@/lib/api';
+import { useWebSocket } from '@/hooks/useWebSocket';
 import { DDEVContainer } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
+import { useConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Toaster, useToast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/utils';
 
 export const Containers: React.FC = () => {
@@ -41,6 +44,10 @@ export const Containers: React.FC = () => {
     const [actionLoading, setActionLoading] = useState<string | null>(null);
     const [selectedContainers, setSelectedContainers] = useState<Set<string>>(new Set());
     const [batchLoading, setBatchLoading] = useState(false);
+    const { confirm, dialog } = useConfirmDialog();
+    const { toast, dismiss, toasts } = useToast();
+
+    useWebSocket();
 
     const fetchContainers = async () => {
         setLoading(true);
@@ -48,7 +55,7 @@ export const Containers: React.FC = () => {
             const data = await listContainers();
             setContainers(data);
             setError(null);
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error('Fetch containers error:', err);
             setError('Impossible de récupérer la liste des containers DDEV.');
         } finally {
@@ -58,14 +65,28 @@ export const Containers: React.FC = () => {
 
     useEffect(() => {
         fetchContainers();
+        const handleRefresh = () => fetchContainers();
+        window.addEventListener('app:queue_updated', handleRefresh);
+        return () => window.removeEventListener('app:queue_updated', handleRefresh);
     }, []);
 
     const handleAction = async (name: string, action: 'start' | 'pause' | 'stop' | 'restart' | 'delete') => {
-        if (action === 'delete' && !confirm(`Voulez-vous vraiment supprimer le projet "${name}" ?`)) return;
-        if (action === 'start' && !confirm(`Démarrer le conteneur "${name}" ?`)) return;
-        if (action === 'pause' && !confirm(`Mettre en pause le conteneur "${name}" ?`)) return;
-        if (action === 'stop' && !confirm(`Arrêter le conteneur "${name}" ?`)) return;
-        if (action === 'restart' && !confirm(`Redémarrer le conteneur "${name}" ?`)) return;
+        const actionLabels: Record<string, string> = {
+            start: 'Démarrer',
+            pause: 'Mettre en pause',
+            stop: 'Arrêter',
+            restart: 'Redémarrer',
+            delete: 'Supprimer',
+        };
+
+        const confirmed = await confirm({
+            title: `${actionLabels[action]} le conteneur`,
+            description: `${actionLabels[action]} le conteneur "${name}" ?`,
+            confirmLabel: actionLabels[action],
+            variant: action === 'delete' ? 'destructive' : 'default',
+        });
+
+        if (!confirmed) return;
 
         setActionLoading(`${name}-${action}`);
         try {
@@ -76,8 +97,11 @@ export const Containers: React.FC = () => {
             else if (action === 'delete') await deleteContainer(name);
 
             await fetchContainers();
-        } catch (err: any) {
-            alert(`Erreur lors de l'action ${action} : ${err.message}`);
+            const actionLabel = actionLabels[action] || action;
+            toast({ title: `Conteneur "${name}" : ${actionLabel.toLowerCase()}`, variant: 'success' });
+        } catch (err: unknown) {
+            const errMsg = err instanceof Error ? err.message : 'Erreur inconnue';
+            toast({ title: 'Erreur', description: errMsg, variant: 'destructive' });
         } finally {
             setActionLoading(null);
         }
@@ -103,7 +127,15 @@ export const Containers: React.FC = () => {
 
     const handleBulkDelete = async () => {
         if (selectedContainers.size === 0) return;
-        if (!confirm(`Supprimer définitivement ces ${selectedContainers.size} conteneur(s) sélectionné(s) ?`)) return;
+
+        const confirmed = await confirm({
+            title: 'Suppression groupée',
+            description: `Supprimer définitivement ces ${selectedContainers.size} conteneur(s) sélectionné(s) ?`,
+            confirmLabel: 'Supprimer',
+            variant: 'destructive',
+        });
+
+        if (!confirmed) return;
 
         setBatchLoading(true);
         try {
@@ -112,8 +144,10 @@ export const Containers: React.FC = () => {
             }
             setSelectedContainers(new Set());
             await fetchContainers();
-        } catch (err: any) {
-            alert(`Erreur lors de la suppression groupée : ${err.message}`);
+            toast({ title: `${selectedContainers.size} conteneur(s) supprimé(s)`, variant: 'success' });
+        } catch (err: unknown) {
+            const errMsg = err instanceof Error ? err.message : 'Erreur inconnue';
+            toast({ title: 'Erreur', description: errMsg, variant: 'destructive' });
         } finally {
             setBatchLoading(false);
         }
@@ -134,7 +168,9 @@ export const Containers: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-background flex flex-col">
-            {/* Header */}
+            {dialog}
+            <Toaster toasts={toasts} dismiss={dismiss} />
+
             <header className="border-b border-border px-8 py-6 flex items-center justify-between bg-card/30 backdrop-blur-sm sticky top-0 z-10">
                 <div className="flex items-center gap-6">
                     <Button

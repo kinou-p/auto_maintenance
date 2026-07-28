@@ -158,12 +158,19 @@ class WorkflowOrchestrator:
                 if not project:
                     raise ValueError(f"Projet {self.project_id} introuvable")
 
-                # Mettre à jour le statut du workflow
+                # Le claim atomique de la queue passe déjà PENDING→RUNNING.
+                # On s'assure seulement que le statut est cohérent.
                 workflow = await session.get(Workflow, self.workflow_id)
                 if workflow:
-                    workflow.status = WorkflowStatus.RUNNING
-                    workflow.started_at = datetime.now(timezone.utc)
-                    await session.commit()
+                    if workflow.status == WorkflowStatus.CANCELLED:
+                        raise WorkflowCancelled("Workflow annulé avant démarrage.")
+                    if workflow.status != WorkflowStatus.RUNNING:
+                        workflow.status = WorkflowStatus.RUNNING
+                        workflow.started_at = datetime.now(timezone.utc)
+                        await session.commit()
+                    elif workflow.started_at is None:
+                        workflow.started_at = datetime.now(timezone.utc)
+                        await session.commit()
 
             # Notifier le frontend du démarrage
             await ws_manager.broadcast({
@@ -266,9 +273,9 @@ class WorkflowOrchestrator:
                     # Continuer avec les étapes suivantes si possible
                     # Sauf pour les étapes critiques
                     critical_steps = {
-                        WorkflowStep.DDEV_CREATE,
-                        WorkflowStep.WP_INSTALL,
-                        WorkflowStep.WPRESS_IMPORT,
+                        WorkflowStep.DDEV_CREATE.value,
+                        WorkflowStep.WP_INSTALL.value,
+                        WorkflowStep.WPRESS_IMPORT.value,
                     }
                     if step_name in critical_steps:
                         await self.logger.error(
@@ -295,11 +302,20 @@ class WorkflowOrchestrator:
 
                 project = await session.get(Project, self.project_id)
                 if project:
-                    is_import_only = self.selected_updates.get("import_only") or self.selected_updates.get("no_maintenance") or self.selected_updates.get("setup_only")
-                    project.status = (
-                        ProjectStatus.READY if (is_import_only and not failed_steps)
-                        else (ProjectStatus.MAINTENANCE_DONE if not failed_steps else ProjectStatus.ERROR)
+                    is_import_only = (
+                        self.options.get("import_only")
+                        or self.options.get("no_maintenance")
+                        or self.options.get("setup_only")
+                        or self.selected_updates.get("import_only")
+                        or self.selected_updates.get("no_maintenance")
+                        or self.selected_updates.get("setup_only")
                     )
+                    if failed_steps:
+                        project.status = ProjectStatus.ERROR
+                    elif is_import_only:
+                        project.status = ProjectStatus.READY
+                    else:
+                        project.status = ProjectStatus.MAINTENANCE_DONE
                     await session.commit()
 
 

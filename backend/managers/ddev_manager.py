@@ -21,7 +21,7 @@ class DDEVManager:
 
     def __init__(self, project_name: str, logger: Optional[WorkflowLogger] = None) -> None:
         self.project_name = project_name
-        self.project_dir = settings.ddev_projects_dir / project_name
+        self.project_dir = settings.effective_ddev_projects_dir / project_name
         self.logger = logger
 
     async def _log(self, level: str, message: str, step: str = "ddev_create") -> None:

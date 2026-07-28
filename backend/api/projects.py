@@ -20,7 +20,7 @@ from backend.managers.hosts_manager import HostsManager
 from backend.managers.workflow_orchestrator import get_active_workflow
 from backend.models.database import Project, ProjectStatus, Workflow, WorkflowStatus, async_session
 from backend.models.schemas import ProjectCreate, ProjectList, ProjectResponse, StatusResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -31,6 +31,32 @@ def _resolve_upload_path_safely(relative_path: str) -> Path:
     if uploads_root != candidate and uploads_root not in candidate.parents:
         raise HTTPException(400, "Chemin de fichier invalide")
     return candidate
+
+
+async def _save_upload_with_limit(upload: UploadFile, dest: Path) -> int:
+    """Écrit un upload sur disque en respectant max_upload_size_mb. Retourne la taille."""
+    max_bytes = settings.max_upload_size_bytes
+    chunk_size = 1024 * 1024  # 1 Mo
+    written = 0
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(dest, "wb") as f:
+            while True:
+                chunk = await upload.read(chunk_size)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    f.close()
+                    dest.unlink(missing_ok=True)
+                    raise HTTPException(
+                        413,
+                        f"Fichier trop volumineux (max {settings.max_upload_size_mb} Mo)",
+                    )
+                f.write(chunk)
+    finally:
+        await upload.close()
+    return written
 
 
 @router.post("/", response_model=ProjectResponse, status_code=201)
@@ -90,10 +116,7 @@ async def create_project(
         if not safe_filename.endswith(".wpress"):
             raise HTTPException(400, "Nom de fichier upload invalide")
         wpress_dest = upload_dir / safe_filename
-
-        with open(wpress_dest, "wb") as f:
-            shutil.copyfileobj(wpress_file.file, f)
-
+        await _save_upload_with_limit(wpress_file, wpress_dest)
         wpress_path = str(wpress_dest)
 
     # Créer le projet en DB
@@ -198,11 +221,14 @@ async def create_projects_batch(
                 })
                 continue
             wpress_dest = upload_dir / safe_filename
-            
-            # Lire et sauvegarder le contenu
-            with open(wpress_dest, "wb") as f:
-                shutil.copyfileobj(wpress_file.file, f)
-            
+            try:
+                await _save_upload_with_limit(wpress_file, wpress_dest)
+            except HTTPException as exc:
+                errors.append({
+                    "file": wpress_file.filename,
+                    "error": str(exc.detail),
+                })
+                continue
             wpress_path = str(wpress_dest)
             
             # Créer le projet en DB
@@ -470,47 +496,49 @@ async def delete_project(
     )
 
 
+class BatchDeleteRequest(BaseModel):
+    project_ids: list[int] = Field(..., min_length=1)
+    cleanup_ddev: bool = True
+
+
 @router.post("/batch-delete", response_model=dict, status_code=200)
 async def delete_projects_batch(
-    project_ids: list[int],
+    payload: BatchDeleteRequest,
     background_tasks: BackgroundTasks,
-    cleanup_ddev: bool = True
 ) -> dict:
     """
     Supprime plusieurs projets en batch.
     """
-    if not project_ids:
+    if not payload.project_ids:
         raise HTTPException(400, "Aucun ID de projet fourni")
 
     count = 0
     async with async_session() as session:
-        # Vérifier et marquer les projets
         result = await session.execute(
-            select(Project).where(Project.id.in_(project_ids))
+            select(Project).where(Project.id.in_(payload.project_ids))
         )
         projects = result.scalars().all()
 
         for project in projects:
             if project.status == ProjectStatus.DELETING:
                 continue
-            
-            # Marquer comme DELETING
+
             project.status = ProjectStatus.DELETING
             background_tasks.add_task(
-                _delete_project_background, 
-                project.id, 
-                project.name, 
-                project.domain, 
-                cleanup_ddev
+                _delete_project_background,
+                project.id,
+                project.name,
+                project.domain,
+                payload.cleanup_ddev,
             )
             count += 1
-        
+
         await session.commit()
 
     return {
         "status": "success",
         "message": f"Suppression lancée pour {count} projet(s).",
-        "count": count
+        "count": count,
     }
 
 

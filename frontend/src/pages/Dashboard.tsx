@@ -1,7 +1,3 @@
-/**
- * Dashboard - Page principale de l'application.
- */
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -21,17 +17,19 @@ import {
   getProjectStatus,
   getProjects,
   getWorkflowQueue,
+  setGlobalErrorHandler,
 } from '@/lib/api';
 import { ProjectForm } from '@/components/project/ProjectForm';
 import { ProjectList } from '@/components/project/ProjectList';
 import { LogViewer } from '@/components/dashboard/LogViewer';
 import { WorkflowProgress } from '@/components/dashboard/WorkflowProgress';
 import { QueueModal } from '@/components/dashboard/QueueModal';
-
 import { ImageComparer } from '@/components/vrt/ImageComparer';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
+import { useConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Toaster, useToast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/utils';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -53,8 +51,11 @@ import {
   Hammer,
   Clock,
   RefreshCw,
+  Menu,
+  MoreVertical,
+  ImageOff,
 } from 'lucide-react';
-
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 import type { VRTReport } from '@/types';
 
@@ -68,20 +69,37 @@ export function Dashboard() {
     setCurrentWorkflow,
     clearLogs,
     setProjects,
+    sidebarOpen,
+    toggleSidebar,
+    ddevLoading,
+    setDdevLoading,
+    workflowLoading,
+    setWorkflowLoading,
   } = useAppStore();
 
-  // Restaurer le projet depuis l'URL (ex: ?project=3) au chargement
+  const { confirm, dialog } = useConfirmDialog();
+  const { toast, dismiss, toasts } = useToast();
+
+  useEffect(() => {
+    setGlobalErrorHandler((message) => {
+      toast({ title: 'Erreur', description: message, variant: 'destructive' });
+    });
+    return () => setGlobalErrorHandler(() => {});
+  }, [toast]);
+
   useEffect(() => {
     const projectIdParam = searchParams.get('project');
-    if (projectIdParam && projects.length > 0 && (!currentProject || currentProject.id !== parseInt(projectIdParam, 10))) {
-      const found = projects.find(p => p.id === parseInt(projectIdParam, 10));
-      if (found) {
-        setCurrentProject(found);
+    if (projectIdParam && projects.length > 0) {
+      const parsedId = parseInt(projectIdParam, 10);
+      if (!currentProject || currentProject.id !== parsedId) {
+        const found = projects.find(p => p.id === parsedId);
+        if (found) {
+          setCurrentProject(found);
+        }
       }
     }
-  }, [projects, searchParams]);
+  }, [projects.length]);
 
-  // Mettre à jour l'URL lorsque le projet courant change
   useEffect(() => {
     if (currentProject) {
       if (searchParams.get('project') !== String(currentProject.id)) {
@@ -91,33 +109,40 @@ export function Dashboard() {
   }, [currentProject?.id]);
 
   const [vrtReport, setVrtReport] = useState<VRTReport | null>(null);
+  const [vrtLoading, setVrtLoading] = useState(false);
   const [health, setHealth] = useState<{ ddev: boolean; docker: boolean } | null>(null);
   const [ddevStatus, setDdevStatus] = useState<string>('unknown');
-  const [workflowLoading, setWorkflowLoading] = useState(false);
   const [logPanelHeight, setLogPanelHeight] = useState(256);
-  const [showLogs, setShowLogs] = useState(false); // Logs hidden by default or toggleable
-  const [globalViewMode, setGlobalViewMode] = useState<'slider' | 'side-by-side' | 'diff'>('slider');
+  const [showLogs, setShowLogs] = useState(false);
+  const [globalViewMode, setGlobalViewMode] = useState<'slider' | 'side-by-side' | 'diff'>(() => {
+    const stored = localStorage.getItem('vrt_view_mode');
+    return (stored as 'slider' | 'side-by-side' | 'diff') || 'slider';
+  });
   const [collapsedItems, setCollapsedItems] = useState<Set<number>>(new Set());
   const isResizing = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Scroll to top when project changes
+  useEffect(() => {
+    localStorage.setItem('vrt_view_mode', globalViewMode);
+  }, [globalViewMode]);
+
   useEffect(() => {
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTop = 0;
     }
   }, [currentProject?.id]);
 
-  // Resize handlers for log panel
+  const logPanelHeightRef = useRef(logPanelHeight);
+  logPanelHeightRef.current = logPanelHeight;
+
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     isResizing.current = true;
     const startY = e.clientY;
-    const startHeight = logPanelHeight;
+    const startHeight = logPanelHeightRef.current;
 
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing.current) return;
-      // Panel is at top, dragging down (increasing Y) should increase height
       const delta = e.clientY - startY;
       const newHeight = Math.min(Math.max(startHeight + delta, 100), window.innerHeight - 200);
       setLogPanelHeight(newHeight);
@@ -135,12 +160,10 @@ export function Dashboard() {
     document.body.style.userSelect = 'none';
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-  }, [logPanelHeight]);
+  }, []);
 
-  // WebSocket global
   useWebSocket(currentProject?.id);
 
-  // Vérification santé au montage
   useEffect(() => {
     checkHealth()
       .then((h) =>
@@ -152,16 +175,31 @@ export function Dashboard() {
       .catch(() => setHealth(null));
   }, []);
 
-  // Charger le rapport VRT du projet courant
-  useEffect(() => {
-    if (currentProject) {
-      getVRTReport(currentProject.id)
-        .then(setVrtReport)
-        .catch(() => setVrtReport(null));
+  const fetchVrtReport = useCallback(async () => {
+    if (!currentProject) return;
+    setVrtLoading(true);
+    try {
+      const report = await getVRTReport(currentProject.id);
+      setVrtReport(report);
+    } catch {
+      setVrtReport(null);
+    } finally {
+      setVrtLoading(false);
     }
   }, [currentProject?.id]);
 
-  // Vérifier et restaurer le workflow actif au chargement
+  useEffect(() => {
+    fetchVrtReport();
+  }, [fetchVrtReport]);
+
+  useEffect(() => {
+    const handleVrtRefresh = () => {
+      fetchVrtReport();
+    };
+    window.addEventListener('app:vrt_refresh', handleVrtRefresh);
+    return () => window.removeEventListener('app:vrt_refresh', handleVrtRefresh);
+  }, [fetchVrtReport]);
+
   useEffect(() => {
     if (!currentProject) {
       setCurrentWorkflow(null);
@@ -169,37 +207,31 @@ export function Dashboard() {
       return;
     }
 
-    // Charger le statut DDEV initial
     const fetchStatus = async () => {
       try {
         const status = await getProjectStatus(currentProject.id);
-        const ddevData = status.ddev.data as any;
-        const rawStatus = ddevData?.raw?.status || (status.ddev.running ? 'running' : 'stopped');
+        const ddevData = status.ddev.data as Record<string, unknown>;
+        const rawStatus = (ddevData?.raw as Record<string, unknown>)?.status as string || (status.ddev.running ? 'running' : 'stopped');
         setDdevStatus(rawStatus);
-      } catch (err) {
+      } catch {
         setDdevStatus('error');
       }
     };
 
     fetchStatus();
 
-    // Ecouter l'événement WebSocket pour ré-évaluer le statut DDEV/workflow
     const handleStatusUpdate = () => fetchStatus();
     window.addEventListener('app:queue_updated', handleStatusUpdate);
 
-    // Vérifier s'il y a un workflow actif pour ce projet
     getActiveWorkflow(currentProject.id)
       .then((workflow) => {
         if (workflow) {
-          console.log('[Dashboard] Workflow actif détecté, reconnexion:', workflow.id);
           setCurrentWorkflow(workflow);
         } else {
-          // Pas de workflow actif, réinitialiser
           setCurrentWorkflow(null);
         }
       })
-      .catch((err) => {
-        console.error('[Dashboard] Erreur lors de la vérification du workflow actif:', err);
+      .catch(() => {
         setCurrentWorkflow(null);
       });
 
@@ -208,14 +240,13 @@ export function Dashboard() {
 
   const [queueInfo, setQueueInfo] = useState<{ total_active: number; total_pending: number } | null>(null);
   const [showQueueModal, setShowQueueModal] = useState(false);
-  const [notification, setNotification] = useState<{ type: 'success' | 'info' | 'warning' | 'error'; message: string } | null>(null);
 
   const fetchQueueInfo = useCallback(async () => {
     try {
       const q = await getWorkflowQueue();
       setQueueInfo({ total_active: q.total_active, total_pending: q.total_pending });
     } catch {
-      // silent fail
+      // silent
     }
   }, []);
 
@@ -227,9 +258,8 @@ export function Dashboard() {
   }, [fetchQueueInfo]);
 
   const handleStartWorkflow = async () => {
-    console.log('[CLICK] handleStartWorkflow triggered', { currentProject });
     if (!currentProject) {
-      alert('Aucun projet sélectionné !');
+      toast({ title: 'Aucun projet sélectionné', variant: 'warning' });
       return;
     }
     setWorkflowLoading(true);
@@ -241,24 +271,21 @@ export function Dashboard() {
       fetchQueueInfo();
 
       if (workflow.status === 'pending' && (queueInfo?.total_active ?? 0) > 0) {
-        setNotification({
-          type: 'info',
-          message: `⏰ Maintenance ajoutée à la file d'attente pour "${currentProject.name}". Elle s'exécutera automatiquement à la suite du workflow en cours.`,
+        toast({
+          title: 'Maintenance en file d\'attente',
+          description: `Maintenance ajoutée à la file pour "${currentProject.name}".`,
+          variant: 'info',
         });
       } else {
-        setNotification({
-          type: 'success',
-          message: `🚀 Maintenance lancée immédiatement pour "${currentProject.name}".`,
+        toast({
+          title: 'Maintenance lancée',
+          description: `Maintenance démarrée pour "${currentProject.name}".`,
+          variant: 'success',
         });
       }
-
-    } catch (err: any) {
-      console.error('Erreur workflow:', err);
-      const errMsg = err.message || 'Impossible de lancer la maintenance.';
-      setNotification({
-        type: 'warning',
-        message: errMsg,
-      });
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Impossible de lancer la maintenance.';
+      toast({ title: 'Erreur', description: errMsg, variant: 'warning' });
     } finally {
       setWorkflowLoading(false);
     }
@@ -266,7 +293,14 @@ export function Dashboard() {
 
   const handleStartImportOnlyWorkflow = async () => {
     if (!currentProject) return;
-    if (!confirm(`Lancer l'importation (sans maintenance) pour "${currentProject.name}" ?`)) return;
+
+    const confirmed = await confirm({
+      title: 'Importer sans maintenance',
+      description: `Lancer l'importation (sans maintenance) pour "${currentProject.name}" ?`,
+      confirmLabel: 'Importer',
+    });
+    if (!confirmed) return;
+
     setWorkflowLoading(true);
     clearLogs();
 
@@ -276,37 +310,32 @@ export function Dashboard() {
       fetchQueueInfo();
 
       if (workflow.status === 'pending' && (queueInfo?.total_active ?? 0) > 0) {
-        setNotification({
-          type: 'info',
-          message: `⏰ Importation sans maintenance ajoutée à la file pour "${currentProject.name}".`,
+        toast({
+          title: 'Importation en file d\'attente',
+          description: `Importation ajoutée à la file pour "${currentProject.name}".`,
+          variant: 'info',
         });
       } else {
-        setNotification({
-          type: 'success',
-          message: `🚀 Lancement & Importation (sans maintenance) pour "${currentProject.name}".`,
+        toast({
+          title: 'Importation lancée',
+          description: `Importation démarrée pour "${currentProject.name}".`,
+          variant: 'success',
         });
       }
-
-    } catch (err: any) {
-      console.error('Erreur workflow:', err);
-      const errMsg = err.message || 'Impossible de lancer l\'importation.';
-      setNotification({
-        type: 'warning',
-        message: errMsg,
-      });
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Impossible de lancer l\'importation.';
+      toast({ title: 'Erreur', description: errMsg, variant: 'warning' });
     } finally {
       setWorkflowLoading(false);
     }
   };
 
-
-
   const refreshProjectState = async () => {
     if (!currentProject) return;
     try {
       const statusRes = await getProjectStatus(currentProject.id);
-      const ddevData = statusRes.ddev.data as any;
-      const rawStatus = ddevData?.raw?.status || (statusRes.ddev.status as string) || (statusRes.ddev.running ? 'running' : 'stopped');
+      const ddevData = statusRes.ddev.data as Record<string, unknown>;
+      const rawStatus = (ddevData?.raw as Record<string, unknown>)?.status as string || (statusRes.ddev.status as string) || (statusRes.ddev.running ? 'running' : 'stopped');
       setDdevStatus(rawStatus);
       const allProjects = await getProjects();
       setProjects(allProjects.projects);
@@ -315,127 +344,130 @@ export function Dashboard() {
     }
   };
 
-  const handleStartProject = async () => {
+  const handleDdevAction = async (
+    action: () => Promise<unknown>,
+    successMessage: string,
+  ) => {
     if (!currentProject) return;
-    setWorkflowLoading(true);
+    setDdevLoading(true);
     try {
-      await startProject(currentProject.id);
+      await action();
       await refreshProjectState();
-    } catch (err) {
-      console.error('Error starting project:', err);
+      toast({ title: successMessage, variant: 'success' });
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Erreur inconnue';
+      toast({ title: 'Erreur', description: errMsg, variant: 'destructive' });
     } finally {
-      setWorkflowLoading(false);
+      setDdevLoading(false);
     }
   };
 
-  const handlePauseProject = async () => {
-    if (!currentProject) return;
-    setWorkflowLoading(true);
-    try {
-      await pauseProject(currentProject.id);
-      await refreshProjectState();
-    } catch (err) {
-      console.error('Error pausing project:', err);
-    } finally {
-      setWorkflowLoading(false);
-    }
-  };
+  const handleStartProject = () => handleDdevAction(
+    () => startProject(currentProject!.id),
+    'DDEV démarré',
+  );
 
-  const handleStopProject = async () => {
-    if (!currentProject) return;
-    setWorkflowLoading(true);
-    try {
-      await stopProject(currentProject.id);
-      await refreshProjectState();
-    } catch (err) {
-      console.error('Error stopping project:', err);
-    } finally {
-      setWorkflowLoading(false);
-    }
-  };
+  const handlePauseProject = () => handleDdevAction(
+    () => pauseProject(currentProject!.id),
+    'DDEV mis en pause',
+  );
 
-  const handleRestartProject = async () => {
-    if (!currentProject) return;
-    setWorkflowLoading(true);
-    try {
-      await restartProject(currentProject.id);
-      await refreshProjectState();
-    } catch (err) {
-      console.error('Error restarting project:', err);
-    } finally {
-      setWorkflowLoading(false);
-    }
-  };
+  const handleStopProject = () => handleDdevAction(
+    () => stopProject(currentProject!.id),
+    'DDEV arrêté',
+  );
 
-  const handleRecreateProject = async () => {
-    if (!currentProject) return;
-    setWorkflowLoading(true);
-    try {
-      await recreateProject(currentProject.id);
-      await refreshProjectState();
-    } catch (err) {
-      console.error('Error recreating project:', err);
-    } finally {
-      setWorkflowLoading(false);
-    }
-  };
+  const handleRestartProject = () => handleDdevAction(
+    () => restartProject(currentProject!.id),
+    'DDEV redémarré',
+  );
+
+  const handleRecreateProject = () => handleDdevAction(
+    () => recreateProject(currentProject!.id),
+    'Projet recréé',
+  );
 
   const handleResetProject = async () => {
     if (!currentProject) return;
-    console.log('[CLICK] handleResetProject triggered', currentProject);
-    setWorkflowLoading(true);
+    setDdevLoading(true);
     try {
       await resetProject(currentProject.id);
       clearLogs();
       await refreshProjectState();
-    } catch (err) {
-      console.error('Error resetting project:', err);
+      toast({ title: 'Projet réinitialisé', variant: 'success' });
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Erreur inconnue';
+      toast({ title: 'Erreur', description: errMsg, variant: 'destructive' });
     } finally {
-      setWorkflowLoading(false);
+      setDdevLoading(false);
     }
   };
 
   const handleCancelWorkflow = async () => {
     if (!currentWorkflow) return;
-    if (!confirm(`Interrompre et annuler la maintenance en cours pour le projet ?`)) return;
+    const confirmed = await confirm({
+      title: 'Annuler la maintenance',
+      description: 'Interrompre et annuler la maintenance en cours pour le projet ?',
+      confirmLabel: 'Annuler la maintenance',
+      variant: 'destructive',
+    });
+    if (!confirmed) return;
     try {
       await cancelWorkflow(currentWorkflow.id);
-    } catch (err) {
-      console.error('Erreur annulation:', err);
+      toast({ title: 'Maintenance annulée', variant: 'info' });
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Erreur inconnue';
+      toast({ title: 'Erreur', description: errMsg, variant: 'destructive' });
     }
   };
 
   const handleGlobalReset = async () => {
-    if (!confirm("Voulez-vous vraiment réinitialiser l'environnement DDEV ?\nCela arrêtera TOUS les projets en cours (power-off).")) return;
+    const confirmed = await confirm({
+      title: 'Réinitialiser DDEV',
+      description: 'Voulez-vous vraiment réinitialiser l\'environnement DDEV ? Cela arrêtera TOUS les projets en cours (power-off).',
+      confirmLabel: 'Réinitialiser',
+      variant: 'destructive',
+    });
+    if (!confirmed) return;
 
-    setWorkflowLoading(true);
+    setDdevLoading(true);
     try {
       await resetDDEVGlobal();
-      alert("DDEV a été réinitialisé avec succès.");
-      // Optionnel : rafraîchir la santé ou les projets
+      toast({ title: 'DDEV réinitialisé avec succès', variant: 'success' });
       const h = await checkHealth();
       setHealth({ ddev: h.checks.ddev_installed, docker: h.checks.docker_running });
-    } catch (err: any) {
-      console.error('Error resetting DDEV:', err);
-      alert(`Erreur lors de la réinitialisation : ${err.message}`);
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Erreur inconnue';
+      toast({ title: 'Erreur', description: errMsg, variant: 'destructive' });
     } finally {
-      setWorkflowLoading(false);
+      setDdevLoading(false);
     }
   };
 
+  const anyLoading = ddevLoading || workflowLoading;
+
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Header */}
-      <header className="border-b border-border px-6 py-3">
+      {dialog}
+      <Toaster toasts={toasts} dismiss={dismiss} />
+
+      <header className="border-b border-border px-4 md:px-6 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="lg:hidden h-8 w-8"
+              onClick={toggleSidebar}
+            >
+              <Menu className="h-4 w-4" />
+            </Button>
             <Wrench className="h-6 w-6 text-primary" />
-            <h1 className="text-xl font-bold">Auto Maintenance</h1>
-            <Badge variant="outline" className="text-xs">v1.0</Badge>
+            <h1 className="text-xl font-bold hidden sm:block">Auto Maintenance</h1>
+            <Badge variant="outline" className="text-xs hidden sm:block">v1.0</Badge>
           </div>
 
-          {/* Navigation & Actions */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 md:gap-4">
             <Button
               variant="outline"
               size="sm"
@@ -444,7 +476,7 @@ export function Dashboard() {
             >
               <Link to="/containers">
                 <LayoutGrid className="mr-1.5 h-3.5 w-3.5" />
-                Containers
+                <span className="hidden sm:inline">Containers</span>
               </Link>
             </Button>
 
@@ -452,16 +484,16 @@ export function Dashboard() {
               variant="outline"
               size="sm"
               onClick={handleGlobalReset}
-              disabled={workflowLoading}
+              disabled={anyLoading}
               title="Réinitialiser l'environnement DDEV (Global Power-off)"
               className="h-8 text-xs px-2"
             >
-              <RotateCcw className={cn("mr-1.5 h-3.5 w-3.5", workflowLoading && "animate-spin")} />
-              Reset DDEV
+              <RotateCcw className={cn("mr-1.5 h-3.5 w-3.5", anyLoading && "animate-spin")} />
+              <span className="hidden sm:inline">Reset DDEV</span>
             </Button>
 
             {currentProject && (
-              <div className="flex items-center gap-2 px-3 py-1 bg-muted/30 rounded-full border border-border/50">
+              <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-muted/30 rounded-full border border-border/50">
                 <div className={cn(
                   "h-2 w-2 rounded-full animate-pulse",
                   ddevStatus === 'running' ? "bg-green-500" :
@@ -475,7 +507,7 @@ export function Dashboard() {
             )}
 
             {health && (
-              <div className="flex items-center gap-3">
+              <div className="hidden md:flex items-center gap-3">
                 <div className="flex items-center gap-1 text-xs">
                   {health.docker ? (
                     <Heart className="h-3.5 w-3.5 text-green-400" />
@@ -498,25 +530,28 @@ export function Dashboard() {
         </div>
       </header>
 
-      {/* Main layout */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        <aside className="w-80 border-r border-border flex flex-col shrink-0 custom-scrollbar">
+        {sidebarOpen && (
+          <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={toggleSidebar} />
+        )}
+        <aside className={cn(
+          "w-80 border-r border-border flex flex-col shrink-0 custom-scrollbar",
+          "fixed lg:relative inset-y-0 left-0 z-50 bg-background",
+          "transition-transform duration-300",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+        )}>
           <div className="p-4 border-b border-border shrink-0">
-            <ProjectForm />
+            <ProjectForm onToast={(title, variant) => toast({ title, variant: variant || 'default' })} />
           </div>
           <div className="flex-1 overflow-hidden p-4">
-            <ProjectList />
+            <ProjectList onToast={(title, variant) => toast({ title, variant: variant || 'default' })} />
           </div>
         </aside>
 
-        {/* Content */}
         <main className="flex-1 flex flex-col overflow-hidden">
           {currentProject ? (
             <>
-              {/* Project Header */}
-              <div className="px-6 py-3 border-b border-border space-y-2">
-                {/* Ligne 1 : titre + contrôles DDEV */}
+              <div className="px-4 md:px-6 py-3 border-b border-border space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <h2 className="text-lg font-semibold truncate">{currentProject.name}</h2>
@@ -551,78 +586,148 @@ export function Dashboard() {
                       </Button>
                     ) : (
                       <>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleStartProject}
-                          disabled={workflowLoading || ddevStatus === 'running'}
-                          title="Démarrer DDEV"
-                          className="text-green-600 border-green-200 hover:bg-green-50"
-                        >
-                          <Play className="h-4 w-4" />
-                        </Button>
+                        <div className="hidden md:flex items-center gap-1.5">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleStartProject}
+                            disabled={anyLoading || ddevStatus === 'running'}
+                            title="Démarrer DDEV"
+                            className="text-green-600 border-green-200 hover:bg-green-50"
+                          >
+                            <Play className="h-4 w-4" />
+                          </Button>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handlePauseProject}
-                          disabled={workflowLoading || ddevStatus === 'paused' || ddevStatus === 'stopped' || ddevStatus === 'unknown'}
-                          title="Pause DDEV"
-                          className="text-amber-600 border-amber-200 hover:bg-amber-50"
-                        >
-                          <Pause className="h-4 w-4" />
-                        </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handlePauseProject}
+                            disabled={anyLoading || ddevStatus === 'paused' || ddevStatus === 'stopped' || ddevStatus === 'unknown'}
+                            title="Pause DDEV"
+                            className="text-amber-600 border-amber-200 hover:bg-amber-50"
+                          >
+                            <Pause className="h-4 w-4" />
+                          </Button>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleStopProject}
-                          disabled={workflowLoading || ddevStatus === 'stopped' || ddevStatus === 'unknown'}
-                          title="Arrêter DDEV"
-                          className="text-orange-600 border-orange-200 hover:bg-orange-50"
-                        >
-                          <Square className="h-4 w-4" />
-                        </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleStopProject}
+                            disabled={anyLoading || ddevStatus === 'stopped' || ddevStatus === 'unknown'}
+                            title="Arrêter DDEV"
+                            className="text-orange-600 border-orange-200 hover:bg-orange-50"
+                          >
+                            <Square className="h-4 w-4" />
+                          </Button>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleRestartProject}
-                          disabled={workflowLoading}
-                          title="Redémarrer DDEV"
-                          className="text-blue-600 border-blue-200 hover:bg-blue-50"
-                        >
-                          <RotateCcw className="h-4 w-4" />
-                        </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleRestartProject}
+                            disabled={anyLoading}
+                            title="Redémarrer DDEV"
+                            className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                          </Button>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleRecreateProject}
-                          disabled={workflowLoading}
-                          title="Recréer le projet"
-                          className="text-purple-600 border-purple-200 hover:bg-purple-50"
-                        >
-                          <Hammer className="h-4 w-4" />
-                        </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleRecreateProject}
+                            disabled={anyLoading}
+                            title="Recréer le projet"
+                            className="text-purple-600 border-purple-200 hover:bg-purple-50"
+                          >
+                            <Hammer className="h-4 w-4" />
+                          </Button>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleResetProject}
-                          disabled={workflowLoading}
-                          title="Réinitialiser le projet (Remet le statut à 'Créé', détruit le conteneur et nettoie les logs sans toucher au fichier .wpress)"
-                          className="text-rose-600 border-rose-200 hover:bg-rose-50"
-                        >
-                          <RefreshCw className="h-4 w-4" />
-                          <span className="hidden xl:inline ml-1 text-xs">Reset</span>
-                        </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleResetProject}
+                            disabled={anyLoading}
+                            title="Réinitialiser le projet"
+                            className="text-rose-600 border-rose-200 hover:bg-rose-50"
+                          >
+                            <RefreshCw className="h-4 w-4" />
+                            <span className="hidden xl:inline ml-1 text-xs">Reset</span>
+                          </Button>
+                        </div>
+
+                        <DropdownMenu.Root>
+                          <DropdownMenu.Trigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="md:hidden"
+                              disabled={anyLoading}
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenu.Trigger>
+                          <DropdownMenu.Portal>
+                            <DropdownMenu.Content
+                              align="end"
+                              className="min-w-[180px] bg-popover rounded-md p-1 shadow-md border border-border z-50"
+                            >
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 px-3 py-2 text-sm rounded-sm cursor-pointer outline-none hover:bg-accent disabled:opacity-50"
+                                disabled={anyLoading || ddevStatus === 'running'}
+                                onSelect={handleStartProject}
+                              >
+                                <Play className="h-4 w-4 text-green-600" />
+                                Démarrer
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 px-3 py-2 text-sm rounded-sm cursor-pointer outline-none hover:bg-accent disabled:opacity-50"
+                                disabled={anyLoading || ddevStatus !== 'running'}
+                                onSelect={handlePauseProject}
+                              >
+                                <Pause className="h-4 w-4 text-amber-600" />
+                                Pause
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 px-3 py-2 text-sm rounded-sm cursor-pointer outline-none hover:bg-accent disabled:opacity-50"
+                                disabled={anyLoading || (ddevStatus !== 'running' && ddevStatus !== 'paused')}
+                                onSelect={handleStopProject}
+                              >
+                                <Square className="h-4 w-4 text-orange-600" />
+                                Arrêter
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 px-3 py-2 text-sm rounded-sm cursor-pointer outline-none hover:bg-accent disabled:opacity-50"
+                                disabled={anyLoading}
+                                onSelect={handleRestartProject}
+                              >
+                                <RotateCcw className="h-4 w-4 text-blue-600" />
+                                Redémarrer
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Separator className="h-px bg-border my-1" />
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 px-3 py-2 text-sm rounded-sm cursor-pointer outline-none hover:bg-accent disabled:opacity-50"
+                                disabled={anyLoading}
+                                onSelect={handleRecreateProject}
+                              >
+                                <Hammer className="h-4 w-4 text-purple-600" />
+                                Recréer
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Item
+                                className="flex items-center gap-2 px-3 py-2 text-sm rounded-sm cursor-pointer outline-none hover:bg-accent text-destructive disabled:opacity-50"
+                                disabled={anyLoading}
+                                onSelect={handleResetProject}
+                              >
+                                <RefreshCw className="h-4 w-4" />
+                                Réinitialiser
+                              </DropdownMenu.Item>
+                            </DropdownMenu.Content>
+                          </DropdownMenu.Portal>
+                        </DropdownMenu.Root>
                       </>
                     )}
                   </div>
                 </div>
 
-                {/* Ligne 2 : actions workflow */}
                 {currentWorkflow?.status !== 'running' && (
                   <div className="flex items-center gap-2 flex-wrap">
                     <Button
@@ -649,7 +754,7 @@ export function Dashboard() {
                       className="border-primary/30 text-primary hover:bg-primary/10"
                     >
                       <Wrench className="mr-1.5 h-4 w-4" />
-                      Lancer & Importer
+                      <span className="hidden sm:inline">Lancer & Importer</span>
                     </Button>
 
                     <Button
@@ -664,38 +769,14 @@ export function Dashboard() {
                 )}
               </div>
 
-              {/* Banner de notification / Feedback file d'attente */}
-              {notification && (
-                <div
-                  className={cn(
-                    "mx-6 mt-4 p-4 rounded-xl flex items-center justify-between border shadow-sm transition-all animate-in fade-in duration-200",
-                    notification.type === 'success' && "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400",
-                    notification.type === 'info' && "bg-blue-500/10 border-blue-500/30 text-blue-600 dark:text-blue-400",
-                    notification.type === 'warning' && "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400",
-                    notification.type === 'error' && "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400",
-                  )}
-                >
-                  <div className="flex items-center gap-2.5">
-                    {notification.type === 'success' && <CheckCircle2 className="h-5 w-5 shrink-0" />}
-                    {notification.type === 'info' && <Clock className="h-5 w-5 shrink-0" />}
-                    {notification.type === 'warning' && <AlertCircle className="h-5 w-5 shrink-0" />}
-                    {notification.type === 'error' && <AlertCircle className="h-5 w-5 shrink-0" />}
-                    <span className="text-sm font-medium">{notification.message}</span>
-                  </div>
-                  <button
-                    onClick={() => setNotification(null)}
-                    className="text-xs font-semibold opacity-70 hover:opacity-100 ml-4 underline"
-                  >
-                    Fermer
-                  </button>
+              {ddevLoading && (
+                <div className="mx-6 mt-4 p-3 rounded-xl flex items-center gap-3 border border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                  <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
+                  <span className="text-sm font-medium">Opération en cours...</span>
                 </div>
               )}
 
-
-              {/* Workflow + Content Area */}
-
-              {/* Workflow Progress (Fixed at top) */}
-              <div className="p-6 pb-0 shrink-0">
+              <div className="p-4 md:p-6 pb-0 shrink-0">
                 <Card>
                   <CardContent className="pt-6">
                     <WorkflowProgress />
@@ -703,7 +784,6 @@ export function Dashboard() {
                 </Card>
               </div>
 
-              {/* Logs Panel (Top, resizable, toggleable) */}
               {showLogs && (
                 <div
                   className="border-b border-border shrink-0 flex flex-col mt-6"
@@ -712,7 +792,6 @@ export function Dashboard() {
                   <div className="flex-1 overflow-hidden">
                     <LogViewer />
                   </div>
-                  {/* Resize handle (Bottom) */}
                   <div
                     onMouseDown={handleMouseDown}
                     className="h-1.5 cursor-row-resize bg-transparent hover:bg-primary/20 active:bg-primary/40 transition-colors flex items-center justify-center group shrink-0"
@@ -724,12 +803,19 @@ export function Dashboard() {
 
               <div
                 ref={scrollContainerRef}
-                className="flex-1 overflow-y-auto p-6 space-y-6"
+                className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6"
               >
-                {/* VRT Report */}
-                {vrtReport && vrtReport.items.length > 0 && (
+                {vrtLoading && (
+                  <Card>
+                    <CardContent className="pt-6 flex items-center justify-center py-12">
+                      <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+                      <span className="ml-3 text-muted-foreground">Chargement du rapport VRT...</span>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {!vrtLoading && vrtReport && vrtReport.items.length > 0 && (
                   <>
-                    {/* VRT Summary */}
                     <Card>
                       <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-lg">
@@ -739,7 +825,6 @@ export function Dashboard() {
                       </CardHeader>
                       <CardContent>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                          {/* Mises à jour */}
                           <div className="space-y-1">
                             <div className="text-2xl font-bold">{vrtReport.updates_total || 0}</div>
                             <div className="text-xs text-muted-foreground">Mises à jour</div>
@@ -751,14 +836,10 @@ export function Dashboard() {
                             </div>
                             <div className="text-xs text-muted-foreground">MàJ Réussies</div>
                           </div>
-
-                          {/* Pages testées */}
                           <div className="space-y-1">
                             <div className="text-2xl font-bold">{vrtReport.total_pages}</div>
                             <div className="text-xs text-muted-foreground">Pages testées</div>
                           </div>
-
-                          {/* Taux de succès VRT */}
                           <div className="space-y-1">
                             <div className="text-2xl font-bold">
                               {vrtReport.total_pages > 0
@@ -771,10 +852,9 @@ export function Dashboard() {
                       </CardContent>
                     </Card>
 
-                    {/* VRT Comparisons */}
                     <Card>
                       <CardHeader>
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
                           <CardTitle className="flex items-center gap-2 text-lg">
                             <ImageIcon className="h-5 w-5" />
                             Comparaison Visuelle
@@ -784,7 +864,7 @@ export function Dashboard() {
                               {vrtReport.total_passed}/{vrtReport.total_pages} pass
                             </Badge>
                           </CardTitle>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs text-muted-foreground mr-2">Mode de vue :</span>
                             <div className="flex gap-1">
                               {(['slider', 'side-by-side', 'diff'] as const).map((mode) => (
@@ -854,13 +934,23 @@ export function Dashboard() {
                     </Card>
                   </>
                 )}
+
+                {!vrtLoading && (!vrtReport || vrtReport.items.length === 0) && currentProject && (
+                  <Card>
+                    <CardContent className="pt-6 flex flex-col items-center justify-center py-12 text-center">
+                      <ImageOff className="h-12 w-12 text-muted-foreground/30 mb-4" />
+                      <h3 className="text-lg font-semibold text-muted-foreground">
+                        Aucun rapport VRT
+                      </h3>
+                      <p className="text-sm text-muted-foreground mt-2 max-w-md">
+                        Lancez une maintenance pour générer des captures d'écran avant/après et comparer visuellement les changements.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
               </div>
-
-              {/* Log panel (bottom, resizable) */}
-
             </>
           ) : (
-            /* No project selected */
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center space-y-3">
                 <Wrench className="h-16 w-16 mx-auto text-muted-foreground/30" />
@@ -879,4 +969,3 @@ export function Dashboard() {
     </div>
   );
 }
-

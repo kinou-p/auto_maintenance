@@ -52,21 +52,22 @@ class ConnectionManager:
         data = json.dumps(message, ensure_ascii=False, default=str)
         dead: list[WebSocket] = []
 
-        # Clients du projet
-        for ws in self._connections.get(project_id, set()):
+        async with self._lock:
+            project_ws = list(self._connections.get(project_id, set()))
+            global_ws = list(self._global_connections)
+
+        for ws in project_ws:
             try:
                 await ws.send_text(data)
             except Exception:
                 dead.append(ws)
 
-        # Clients globaux
-        for ws in self._global_connections:
+        for ws in global_ws:
             try:
                 await ws.send_text(data)
             except Exception:
                 dead.append(ws)
 
-        # Nettoyage des connexions mortes
         for ws in dead:
             await self.disconnect(ws, project_id)
             await self.disconnect(ws, None)
@@ -74,20 +75,29 @@ class ConnectionManager:
     async def broadcast(self, message: dict[str, Any]) -> None:
         """Envoie un message à toutes les connexions."""
         data = json.dumps(message, ensure_ascii=False, default=str)
-        all_ws: set[WebSocket] = set(self._global_connections)
-        for conns in self._connections.values():
-            all_ws.update(conns)
+
+        async with self._lock:
+            all_ws: set[WebSocket] = set(self._global_connections)
+            for conns in self._connections.values():
+                all_ws.update(conns)
+            snapshot = list(all_ws)
 
         dead: list[WebSocket] = []
-        for ws in all_ws:
+        for ws in snapshot:
             try:
                 await ws.send_text(data)
             except Exception:
                 dead.append(ws)
-        for ws in dead:
-            self._global_connections.discard(ws)
-            for conns in self._connections.values():
-                conns.discard(ws)
+
+        if dead:
+            async with self._lock:
+                for ws in dead:
+                    self._global_connections.discard(ws)
+                    for conns in self._connections.values():
+                        conns.discard(ws)
+                empty_keys = [pid for pid, conns in self._connections.items() if not conns]
+                for pid in empty_keys:
+                    del self._connections[pid]
 
 
 # Singleton global

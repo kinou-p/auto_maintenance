@@ -1,37 +1,32 @@
-/**
- * ProjectForm - Formulaire de création de projet (Redesigned).
- */
-
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/Card';
 import { createProject, createProjectsBatch, listWpressFiles, createProjectsFromLibrary, getProjects } from '@/lib/api';
 import { useAppStore } from '@/stores/appStore';
-import { Upload, FolderPlus, Loader2, Files } from 'lucide-react';
+import { Upload, FolderPlus, Loader2, Files, X } from 'lucide-react';
 
-export function ProjectForm() {
+interface ProjectFormProps {
+  onToast?: (message: string, variant?: 'default' | 'success' | 'info' | 'warning' | 'destructive') => void;
+}
+
+export function ProjectForm({ onToast }: ProjectFormProps) {
   const [activeTab, setActiveTab] = useState<'new' | 'library'>('new');
-
-  // States pour "Nouveau" (Upload)
   const [name, setName] = useState('');
   const [domain, setDomain] = useState('');
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
-
-  // States pour "Bibliothèque"
   const [libraryFiles, setLibraryFiles] = useState<{ path: string; name: string; size: number; created: number }[]>([]);
   const [selectedLibraryFiles, setSelectedLibraryFiles] = useState<string[]>([]);
   const [librarySearch, setLibrarySearch] = useState('');
-
-  // States globaux
   const [loading, setLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [error, setError] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadControllerRef = useRef<{ abort: () => void } | null>(null);
 
   const { setCurrentProject, setProjects, projects } = useAppStore();
 
-  // Charger la librairie au changement d'onglet
   useEffect(() => {
     if (activeTab === 'library') {
       fetchLibraryFiles();
@@ -61,23 +56,47 @@ export function ProjectForm() {
   const handleUploadFilesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+    processFiles(Array.from(files));
+  };
 
-    const newFiles = Array.from(files).filter(f => f.name.endsWith('.wpress'));
+  const processFiles = (files: File[]) => {
+    const newFiles = files.filter(f => f.name.endsWith('.wpress'));
     if (newFiles.length !== files.length) {
       setError('Certains fichiers ont été ignorés car ils ne sont pas au format .wpress');
     } else {
       setError('');
     }
-
     setUploadFiles(newFiles);
 
-    // Auto-fill name si un seul fichier
     if (newFiles.length === 1 && newFiles[0] && !name) {
       const autoName = newFiles[0].name
         .replace('.wpress', '')
         .replace(/[^a-zA-Z0-9_-]/g, '-')
         .toLowerCase();
       handleNameChange(autoName);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      processFiles(Array.from(files));
     }
   };
 
@@ -99,6 +118,17 @@ export function ProjectForm() {
     }
   };
 
+  const handleCancelUpload = () => {
+    if (uploadControllerRef.current) {
+      uploadControllerRef.current.abort();
+      uploadControllerRef.current = null;
+    }
+    setUploadProgress(null);
+    setLoading(false);
+    setUploadFiles([]);
+    onToast?.('Upload annulé', 'info');
+  };
+
   const filteredLibraryFiles = libraryFiles.filter(f =>
     f.name.toLowerCase().includes(librarySearch.toLowerCase())
   );
@@ -108,9 +138,10 @@ export function ProjectForm() {
     setError('');
     setLoading(true);
 
+    uploadControllerRef.current = { abort: () => {} };
+
     try {
       if (activeTab === 'new') {
-        // SCÉNARIO 1 : Upload
         if (uploadFiles.length === 0) {
           throw new Error("Veuillez sélectionner au moins un fichier .wpress");
         }
@@ -118,23 +149,24 @@ export function ProjectForm() {
         setUploadProgress(0);
 
         if (uploadFiles.length === 1 && uploadFiles[0]) {
-          // Création simple
           if (!name.trim()) throw new Error("Le nom du projet est requis.");
           const project = await createProject(
             name.trim(),
             domain.trim() || undefined,
             uploadFiles[0],
             undefined,
-            (progress) => setUploadProgress(progress)
+            (progress) => setUploadProgress(progress),
+            uploadControllerRef.current
           );
           setCurrentProject(project);
           setProjects([project, ...projects]);
+          onToast?.(`Projet "${project.name}" créé`, 'success');
         } else {
-          // Création Batch (Upload)
-          const result = await createProjectsBatch(uploadFiles, (progress) => setUploadProgress(progress));
+          const result = await createProjectsBatch(uploadFiles, (progress) => setUploadProgress(progress), uploadControllerRef.current);
           if (result.created.length > 0) {
             setProjects([...result.created, ...projects]);
             if (result.created[0]) setCurrentProject(result.created[0]);
+            onToast?.(`${result.created.length} projet(s) créé(s)`, 'success');
           }
           if (result.errors.length > 0) {
             const errorMsg = result.errors.map(e => `${e.file}: ${e.error}`).join('\n');
@@ -142,14 +174,12 @@ export function ProjectForm() {
           }
         }
 
-        // Reset
         setUploadFiles([]);
         setName('');
         setDomain('');
         if (fileInputRef.current) fileInputRef.current.value = '';
 
       } else {
-        // SCÉNARIO 2 : Librairie
         if (selectedLibraryFiles.length === 0) {
           throw new Error("Veuillez sélectionner au moins un fichier dans la bibliothèque.");
         }
@@ -158,6 +188,7 @@ export function ProjectForm() {
         if (result.created.length > 0) {
           setProjects([...result.created, ...projects]);
           if (result.created[0]) setCurrentProject(result.created[0]);
+          onToast?.(`${result.created.length} projet(s) créé(s)`, 'success');
         }
         if (result.errors.length > 0) {
           const errorMsg = result.errors.map(e => `${e.file}: ${e.error}`).join('\n');
@@ -167,7 +198,11 @@ export function ProjectForm() {
         setSelectedLibraryFiles([]);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Une erreur est survenue');
+      const message = err instanceof Error ? err.message : 'Une erreur est survenue';
+      setError(message);
+      if (message !== 'Upload annulé') {
+        onToast?.(message, 'destructive');
+      }
     } finally {
       try {
         const fresh = await getProjects();
@@ -177,6 +212,7 @@ export function ProjectForm() {
       }
       setLoading(false);
       setUploadProgress(null);
+      uploadControllerRef.current = null;
     }
   };
 
@@ -191,7 +227,6 @@ export function ProjectForm() {
           Ajoutez des projets WordPress à votre environnement.
         </CardDescription>
 
-        {/* Custom Tabs */}
         <div className="flex p-1 mt-4 bg-muted/50 rounded-lg">
           <button
             type="button"
@@ -213,12 +248,20 @@ export function ProjectForm() {
       <form onSubmit={handleSubmit}>
         <CardContent className="min-h-[300px] space-y-4">
 
-          {/* ONGLET 1 : NOUVEAU (UPLOAD) */}
           {activeTab === 'new' && (
             <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div
-                className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all duration-200 ${uploadFiles.length > 0 ? 'border-primary/50 bg-primary/5' : 'border-border hover:border-primary/30 hover:bg-accent/50'}`}
+                className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all duration-200 ${
+                  isDragging
+                    ? 'border-primary bg-primary/10'
+                    : uploadFiles.length > 0
+                      ? 'border-primary/50 bg-primary/5'
+                      : 'border-border hover:border-primary/30 hover:bg-accent/50'
+                }`}
                 onClick={() => fileInputRef.current?.click()}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
               >
                 <input
                   ref={fileInputRef}
@@ -236,13 +279,13 @@ export function ProjectForm() {
                     <div className="text-sm font-medium">
                       {uploadFiles.length} fichier(s) sélectionné(s)
                     </div>
-                    <p className="text-xs text-muted-foreground">Cliquez pour changer</p>
+                    <p className="text-xs text-muted-foreground">Cliquez pour changer ou glissez-déposez</p>
                   </div>
                 ) : (
                   <div className="space-y-2">
                     <Upload className="h-10 w-10 mx-auto text-muted-foreground/50" />
                     <p className="text-sm font-medium text-foreground">
-                      Cliquez ou glissez vos fichiers .wpress
+                      {isDragging ? 'Déposez vos fichiers ici' : 'Cliquez ou glissez vos fichiers .wpress'}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       Jusqu'à 500Mo par fichier
@@ -251,7 +294,6 @@ export function ProjectForm() {
                 )}
               </div>
 
-              {/* Formulaire si 1 seul fichier */}
               {uploadFiles.length === 1 && (
                 <div className="space-y-3 pt-2">
                   <div className="space-y-1">
@@ -275,7 +317,6 @@ export function ProjectForm() {
                 </div>
               )}
 
-              {/* Liste si plusieurs fichiers */}
               {uploadFiles.length > 1 && (
                 <div className="bg-accent/30 rounded-lg p-3 max-h-40 overflow-y-auto space-y-2">
                   {uploadFiles.map((f, i) => (
@@ -289,10 +330,8 @@ export function ProjectForm() {
             </div>
           )}
 
-          {/* ONGLET 2 : BIBLIOTHEQUE */}
           {activeTab === 'library' && (
             <div className="space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-300 h-full flex flex-col">
-              {/* Recherche et Filtres */}
               <div className="flex gap-2">
                 <Input
                   placeholder="Rechercher..."
@@ -302,7 +341,6 @@ export function ProjectForm() {
                 />
               </div>
 
-              {/* Liste des fichiers */}
               <div className="border rounded-md flex-1 overflow-hidden flex flex-col max-h-[250px] min-h-[200px]">
                 <div className="bg-muted/30 p-2 text-xs font-medium text-muted-foreground flex justify-between items-center border-b">
                   <span>{filteredLibraryFiles.length} fichiers trouvés</span>
@@ -353,19 +391,27 @@ export function ProjectForm() {
             </div>
           )}
 
-          {/* Erreur globale */}
           {error && (
             <div className="p-3 text-sm text-destructive bg-destructive/10 rounded-md whitespace-pre-line animate-in fade-in zoom-in-95 duration-200">
               {error}
             </div>
           )}
 
-          {/* Barre de progression */}
           {uploadProgress !== null && (
             <div className="space-y-1.5 p-3 bg-primary/5 rounded-md border border-primary/20">
               <div className="flex justify-between text-xs font-medium text-primary">
                 <span>Téléversement du fichier...</span>
-                <span>{uploadProgress}%</span>
+                <div className="flex items-center gap-2">
+                  <span>{uploadProgress}%</span>
+                  <button
+                    type="button"
+                    onClick={handleCancelUpload}
+                    className="text-destructive hover:text-destructive/80"
+                    title="Annuler l'upload"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
               <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
                 <div

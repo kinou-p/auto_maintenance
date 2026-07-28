@@ -121,14 +121,14 @@ async def start_workflows_batch(payload: BatchWorkflowRequest) -> list[WorkflowR
     Démarre des workflows pour plusieurs projets (batch).
     """
     created_workflows = []
-    
+    queued_ids: list[int] = []
+
     async with async_session() as session:
         for pid in payload.project_ids:
-            # Vérifier existence projet et absence de workflow en cours
             project = await session.get(Project, pid)
             if not project:
                 continue
-                
+
             running = await session.execute(
                 select(Workflow).where(
                     Workflow.project_id == pid,
@@ -137,28 +137,32 @@ async def start_workflows_batch(payload: BatchWorkflowRequest) -> list[WorkflowR
             )
             if running.scalar_one_or_none():
                 continue
-            
+
             options = {}
             if payload.import_only:
                 options["import_only"] = True
 
-            # Créer le workflow
             workflow = Workflow(
                 project_id=pid,
                 status=WorkflowStatus.PENDING,
                 options=options,
             )
             session.add(workflow)
-            await session.flush() # Pour avoir l'ID
+            await session.flush()
             await session.refresh(workflow)
-            
+
             created_workflows.append(WorkflowResponse.model_validate(workflow))
-            
-            # Ajouter à la queue (ceci ne bloque pas)
-            await queue_manager.add_to_queue(workflow.id)
-        
+            queued_ids.append(workflow.id)
+
         await session.commit()
-        
+
+    # Enfiler seulement après commit DB (évite claim d'un workflow non persisté)
+    for wid in queued_ids:
+        await queue_manager.add_to_queue(wid)
+
+    if queued_ids:
+        await ws_manager.broadcast({"type": "queue_updated"})
+
     return created_workflows
 
 

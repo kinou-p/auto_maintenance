@@ -1,7 +1,3 @@
-/**
- * WorkflowProgress - Barre de progression du workflow.
- */
-
 import { useAppStore } from '@/stores/appStore';
 import { Progress } from '@/components/ui/Progress';
 import { Badge } from '@/components/ui/Badge';
@@ -64,9 +60,18 @@ export function WorkflowProgress() {
     }
   };
 
+  const statusLabel = () => {
+    switch (status) {
+      case 'running': return 'En cours';
+      case 'completed': return 'Terminé';
+      case 'failed': return 'Échoué';
+      case 'cancelled': return 'Annulé';
+      default: return 'En attente';
+    }
+  };
+
   return (
     <div className="space-y-4">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold">Progression du Workflow</h3>
@@ -78,10 +83,7 @@ export function WorkflowProgress() {
         </div>
         <div className="flex items-center gap-2">
           <Badge variant={statusVariant()}>
-            {status === 'running' ? 'En cours' :
-             status === 'completed' ? 'Terminé' :
-             status === 'failed' ? 'Échoué' :
-             status === 'cancelled' ? 'Annulé' : 'En attente'}
+            {statusLabel()}
           </Badge>
           <span className="text-sm font-medium text-muted-foreground">
             {Math.round(progress)}%
@@ -89,11 +91,9 @@ export function WorkflowProgress() {
         </div>
       </div>
 
-      {/* Barre de progression */}
       <Progress value={progress} />
 
-      {/* Étapes */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-10 gap-2">
         {ALL_STEPS.map((step) => {
           const stepStatus = getStepStatus(step);
           return (
@@ -106,9 +106,10 @@ export function WorkflowProgress() {
                 stepStatus === 'running' && 'border-primary bg-primary/10',
                 stepStatus === 'pending' && 'border-border',
               )}
+              title={WORKFLOW_STEP_LABELS[step] || step}
             >
               {getStepIcon(stepStatus)}
-              <span className="truncate">
+              <span className="truncate hidden lg:inline">
                 {WORKFLOW_STEP_LABELS[step] || step}
               </span>
             </div>

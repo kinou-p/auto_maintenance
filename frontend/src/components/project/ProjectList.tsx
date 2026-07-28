@@ -1,13 +1,10 @@
-/**
- * ProjectList - Liste des projets avec actions.
- */
-
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { getProjects, deleteProject, deleteProjectsBatch, startBatchWorkflows, resetProject } from '@/lib/api';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { useConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { cn } from '@/lib/utils';
 import {
   FolderOpen,
@@ -35,7 +32,11 @@ const STATUS_CONFIG: Record<ProjectStatus, { label: string; variant: 'default' |
   deleting: { label: 'Suppression...', variant: 'warning' },
 };
 
-export function ProjectList() {
+interface ProjectListProps {
+  onToast?: (message: string, variant?: 'default' | 'success' | 'info' | 'warning' | 'destructive') => void;
+}
+
+export function ProjectList({ onToast }: ProjectListProps) {
   const { projects, setProjects, currentProject, setCurrentProject } = useAppStore();
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<{ projectId: number; action: 'delete' | 'reset' } | null>(null);
@@ -43,6 +44,7 @@ export function ProjectList() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [batchLoading, setBatchLoading] = useState(false);
+  const { confirm, dialog } = useConfirmDialog();
 
   const fetchProjects = async () => {
     setLoading(true);
@@ -64,13 +66,10 @@ export function ProjectList() {
     };
 
     window.addEventListener('app:queue_updated', handleQueueUpdated);
-    const interval = setInterval(fetchProjects, 3000);
 
     return () => {
       window.removeEventListener('app:queue_updated', handleQueueUpdated);
-      clearInterval(interval);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleSelection = (id: number) => {
@@ -91,15 +90,18 @@ export function ProjectList() {
   const handleBatchRun = async () => {
     if (selectedProjects.size === 0) return;
 
-    if (!confirm(`Lancer la maintenance pour ces ${selectedProjects.size} projet(s) sélectionné(s) ?`)) {
-      return;
-    }
+    const confirmed = await confirm({
+      title: 'Lancer la maintenance groupée',
+      description: `Lancer la maintenance pour ces ${selectedProjects.size} projet(s) sélectionné(s) ?`,
+      confirmLabel: 'Lancer',
+    });
+
+    if (!confirmed) return;
 
     setBatchLoading(true);
     try {
       const workflows = await startBatchWorkflows(Array.from(selectedProjects));
 
-      // Si des workflows ont été créés, on focus le premier projet
       if (workflows && workflows.length > 0) {
         const firstProjectId = workflows[0]?.project_id;
         if (firstProjectId) {
@@ -110,12 +112,12 @@ export function ProjectList() {
         }
       }
 
-      // Optionnel : notification toaster
+      onToast?.(`Maintenance lancée pour ${selectedProjects.size} projet(s)`, 'success');
       setSelectionMode(false);
       setSelectedProjects(new Set());
     } catch (err) {
       console.error('Erreur batch:', err);
-      alert('Erreur lors du lancement groupé.');
+      onToast?.('Erreur lors du lancement groupé', 'destructive');
     } finally {
       setBatchLoading(false);
     }
@@ -124,19 +126,25 @@ export function ProjectList() {
   const handleBatchDelete = async () => {
     if (selectedProjects.size === 0) return;
 
-    if (!confirm(`Supprimer définitivement ces ${selectedProjects.size} projets ? Cette action est irréversible.`)) {
-      return;
-    }
+    const confirmed = await confirm({
+      title: 'Supprimer les projets',
+      description: `Supprimer définitivement ces ${selectedProjects.size} projets ? Cette action est irréversible.`,
+      confirmLabel: 'Supprimer',
+      variant: 'destructive',
+    });
+
+    if (!confirmed) return;
 
     setBatchLoading(true);
     try {
       await deleteProjectsBatch(Array.from(selectedProjects));
       await fetchProjects();
+      onToast?.(`${selectedProjects.size} projet(s) supprimé(s)`, 'success');
       setSelectionMode(false);
       setSelectedProjects(new Set());
     } catch (err) {
       console.error('Erreur batch delete:', err);
-      alert('Erreur lors de la suppression groupée.');
+      onToast?.('Erreur lors de la suppression groupée', 'destructive');
     } finally {
       setBatchLoading(false);
     }
@@ -145,9 +153,14 @@ export function ProjectList() {
   const handleBatchReset = async () => {
     if (selectedProjects.size === 0) return;
 
-    if (!confirm(`Réinitialiser les ${selectedProjects.size} projet(s) sélectionné(s) ?\nLeurs conteneurs DDEV et rapports seront réinitialisés, et leur statut repassera à 'Créé' (sans supprimer les fichiers .wpress).`)) {
-      return;
-    }
+    const confirmed = await confirm({
+      title: 'Réinitialiser les projets',
+      description: `Réinitialiser les ${selectedProjects.size} projet(s) sélectionné(s) ? Leurs conteneurs DDEV et rapports seront réinitialisés, et leur statut repassera à 'Créé' (sans supprimer les fichiers .wpress).`,
+      confirmLabel: 'Réinitialiser',
+      variant: 'destructive',
+    });
+
+    if (!confirmed) return;
 
     setBatchLoading(true);
     try {
@@ -155,11 +168,12 @@ export function ProjectList() {
         await resetProject(id);
       }
       await fetchProjects();
+      onToast?.(`${selectedProjects.size} projet(s) réinitialisé(s)`, 'success');
       setSelectionMode(false);
       setSelectedProjects(new Set());
     } catch (err) {
       console.error('Erreur batch reset:', err);
-      alert('Erreur lors de la réinitialisation groupée.');
+      onToast?.('Erreur lors de la réinitialisation groupée', 'destructive');
     } finally {
       setBatchLoading(false);
     }
@@ -174,7 +188,15 @@ export function ProjectList() {
   };
 
   const handleDelete = async (project: Project) => {
-    console.log('[CLICK] ProjectList handleDelete triggered', project);
+    const confirmed = await confirm({
+      title: 'Supprimer le projet',
+      description: `Supprimer définitivement le projet "${project.name}" ? Cette action est irréversible.`,
+      confirmLabel: 'Supprimer',
+      variant: 'destructive',
+    });
+
+    if (!confirmed) return;
+
     setActionLoading({ projectId: project.id, action: 'delete' });
     try {
       await deleteProject(project.id);
@@ -182,21 +204,24 @@ export function ProjectList() {
         setCurrentProject(null);
       }
       await fetchProjects();
+      onToast?.(`Projet "${project.name}" supprimé`, 'success');
     } catch (err) {
       console.error('Error deleting project:', err);
+      onToast?.('Erreur lors de la suppression', 'destructive');
     } finally {
       setActionLoading(null);
     }
   };
 
   const handleReset = async (project: Project) => {
-    console.log('[CLICK] ProjectList handleReset triggered', project);
     setActionLoading({ projectId: project.id, action: 'reset' });
     try {
       await resetProject(project.id);
       await fetchProjects();
+      onToast?.(`Projet "${project.name}" réinitialisé`, 'success');
     } catch (err) {
       console.error('Error resetting project:', err);
+      onToast?.('Erreur lors de la réinitialisation', 'destructive');
     } finally {
       setActionLoading(null);
     }
@@ -209,6 +234,7 @@ export function ProjectList() {
 
   return (
     <div className="flex flex-col h-full">
+      {dialog}
       <div className="flex items-center justify-between mb-2 shrink-0">
         <h3 className="text-sm font-semibold text-foreground/90">
           Projets <span className="text-muted-foreground ml-1 font-normal">({projects.length})</span>
@@ -332,15 +358,17 @@ export function ProjectList() {
           const isSelected = currentProject?.id === project.id;
           const isDeleting = project.status === 'deleting';
           const isChecked = selectedProjects.has(project.id);
-
-          // Determine if project is running a task
           const isRunning = ['initializing', 'wordpress_installed', 'importing', 'maintenance_in_progress'].includes(project.status);
 
           return (
             <div
               key={project.id}
+              role="button"
+              tabIndex={0}
+              aria-label={`Projet ${project.name}, statut ${statusConfig.label}`}
+              aria-pressed={isSelected}
               className={cn(
-                'group relative rounded-md border transition-all duration-200',
+                'group relative rounded-md border transition-all duration-200 cursor-pointer',
                 isSelected && !selectionMode
                   ? 'border-primary bg-primary/5 shadow-sm'
                   : 'border-transparent bg-card hover:bg-accent/50 hover:border-border/50',
@@ -354,8 +382,17 @@ export function ProjectList() {
                   setCurrentProject(project);
                 }
               }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  if (selectionMode) {
+                    toggleSelection(project.id);
+                  } else if (!isDeleting) {
+                    setCurrentProject(project);
+                  }
+                }
+              }}
             >
-              {/* Selection Checkbox Overlay */}
               {selectionMode && (
                 <div className="absolute left-3 top-3 z-10">
                   <div className={cn(

@@ -1,11 +1,6 @@
-/**
- * Auto Maintenance - Store global (Zustand).
- */
-
 import { create } from 'zustand';
 import type { LogMessage, Project, Workflow } from '@/types';
 
-// ── Helpers localStorage pour les logs par projet ────────────────
 const LOG_STORAGE_PREFIX = 'auto_maintenance_logs_';
 const MAX_STORED_LOGS = 500;
 
@@ -25,7 +20,7 @@ function storeProjectLogs(projectId: number, logs: LogMessage[]): void {
       JSON.stringify(logs.slice(-MAX_STORED_LOGS)),
     );
   } catch {
-    // localStorage plein — silent fail
+    // silent fail
   }
 }
 
@@ -38,7 +33,6 @@ function deleteProjectLogs(projectId: number): void {
 }
 
 interface AppState {
-  // ── Projects ───────────────────────────────────────────────────
   projects: Project[];
   currentProject: Project | null;
   setProjects: (projects: Project[]) => void;
@@ -46,31 +40,31 @@ interface AppState {
   updateProject: (project: Project) => void;
   removeProject: (id: number) => void;
 
-  // ── Workflows ──────────────────────────────────────────────────
   currentWorkflow: Workflow | null;
   setCurrentWorkflow: (workflow: Workflow | null) => void;
 
-  // ── Logs ───────────────────────────────────────────────────────
   logs: LogMessage[];
   addLog: (log: LogMessage) => void;
   clearLogs: () => void;
 
-  // ── Progress ───────────────────────────────────────────────────
   progress: number;
   currentStep: string | null;
   setProgress: (progress: number, step?: string) => void;
 
-  // ── WebSocket ──────────────────────────────────────────────────
   wsConnected: boolean;
   setWsConnected: (connected: boolean) => void;
 
-  // ── UI ─────────────────────────────────────────────────────────
   sidebarOpen: boolean;
   toggleSidebar: () => void;
+
+  ddevLoading: boolean;
+  setDdevLoading: (loading: boolean) => void;
+
+  workflowLoading: boolean;
+  setWorkflowLoading: (loading: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
-  // Projects
   projects: [],
   currentProject: null,
   setProjects: (projects) => {
@@ -84,17 +78,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   setCurrentProject: (project) => {
     const current = get().currentProject;
-    // Si c'est déjà le même projet, ne pas réinitialiser les logs et le workflow
     if (current && project && current.id === project.id) {
       set({ currentProject: project });
       return;
     }
-    // Charger les logs sauvegardés du projet sélectionné
     const logs = project ? getStoredLogs(project.id) : [];
     set({
       currentProject: project,
       logs,
-      // Réinitialiser l'état du workflow/progression au changement de projet
       currentWorkflow: null,
       progress: 0,
       currentStep: null,
@@ -111,27 +102,22 @@ export const useAppStore = create<AppState>((set, get) => ({
           : state.currentProject,
     })),
   removeProject: (id) => {
-    // Supprimer les logs persistés du projet
     deleteProjectLogs(id);
     set((state) => ({
       projects: state.projects.filter((p) => p.id !== id),
       currentProject:
         state.currentProject?.id === id ? null : state.currentProject,
-      // Vider les logs si c'est le projet courant
       logs: state.currentProject?.id === id ? [] : state.logs,
     }));
   },
 
-  // Workflows
   currentWorkflow: null,
   setCurrentWorkflow: (workflow) => set({ currentWorkflow: workflow }),
 
-  // Logs
   logs: [],
   addLog: (log) =>
     set((state) => {
       const newLogs = [...state.logs, log].slice(-MAX_STORED_LOGS);
-      // Persister dans localStorage pour le projet courant
       const projectId = state.currentProject?.id;
       if (projectId) {
         storeProjectLogs(projectId, newLogs);
@@ -146,18 +132,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ logs: [] });
   },
 
-  // Progress
   progress: 0,
   currentStep: null,
   setProgress: (progress, step) =>
     set({ progress, currentStep: step ?? null }),
 
-  // WebSocket
   wsConnected: false,
   setWsConnected: (connected) => set({ wsConnected: connected }),
 
-  // UI
   sidebarOpen: true,
   toggleSidebar: () =>
     set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+
+  ddevLoading: false,
+  setDdevLoading: (loading) => set({ ddevLoading: loading }),
+
+  workflowLoading: false,
+  setWorkflowLoading: (loading) => set({ workflowLoading: loading }),
 }));

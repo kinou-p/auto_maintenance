@@ -1,0 +1,15 @@
+# Set default behavior to automatically normalize line endings to LF in git repository
+* text=auto eol=lf
+
+# Explicitly specify binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar.gz binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary

@@ -6,14 +6,19 @@ depuis les variables d'environnement et le fichier .env.
 """
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 # Répertoire racine du projet
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+
+def _default_ddev_projects_dir() -> Path:
+    """Chemin portable des projets DDEV (data local du projet)."""
+    return BASE_DIR / "data" / "ddev-projects"
 
 
 class Settings(BaseSettings):
@@ -44,9 +49,9 @@ class Settings(BaseSettings):
     )
 
     # --- DDEV ---
-    ddev_projects_dir: Path = Field(
-        default_factory=lambda: Path.home() / "ddev-projects"
-    )
+    ddev_projects_dir: Path = Field(default_factory=_default_ddev_projects_dir)
+    # Chemin hôte pour Docker-in-Docker (identique hôte/container si monté)
+    host_ddev_projects: Optional[Path] = None
     ddev_php_version: str = "8.2"
     ddev_webserver_type: str = "nginx-fpm"
     ddev_mariadb_version: str = "10.6"
@@ -54,6 +59,9 @@ class Settings(BaseSettings):
     # --- Workflows & Concurrence ---
     max_concurrent_workflows: int = 2
     updates_cache_ttl_minutes: int = 15
+
+    # --- Uploads ---
+    max_upload_size_mb: int = 2048  # 2 Go max par fichier .wpress
 
     # --- WordPress ---
     wp_admin_user: str = "admin_temp"
@@ -87,6 +95,26 @@ class Settings(BaseSettings):
 
     # --- Sudo ---
     sudo_method: Literal["sudoers", "pkexec", "prompt"] = "sudoers"
+
+    @field_validator("ddev_projects_dir", "host_ddev_projects", "aio_plugin_zip_path", mode="before")
+    @classmethod
+    def _expand_path(cls, v):
+        if v is None or v == "":
+            return None
+        if isinstance(v, str):
+            return Path(v).expanduser()
+        return v
+
+    @property
+    def max_upload_size_bytes(self) -> int:
+        return self.max_upload_size_mb * 1024 * 1024
+
+    @property
+    def effective_ddev_projects_dir(self) -> Path:
+        """Répertoire DDEV effectif (host path prioritaire si défini)."""
+        if self.host_ddev_projects:
+            return self.host_ddev_projects
+        return self.ddev_projects_dir
 
     # --- Paths dérivés ---
     @property

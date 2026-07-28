@@ -28,10 +28,21 @@ from backend.core.config import settings
 
 
 # ── Engine & Session ──────────────────────────────────────────────
+def _sqlite_connect_args() -> dict:
+    """Args SQLite optimisés pour concurrence (WAL + busy timeout)."""
+    if "sqlite" not in settings.database_url:
+        return {}
+    return {
+        "check_same_thread": False,
+        "timeout": 60.0,
+    }
+
+
 engine = create_async_engine(
     settings.database_url,
     echo=settings.sql_echo,
-    connect_args={"check_same_thread": False, "timeout": 30.0},
+    connect_args=_sqlite_connect_args(),
+    pool_pre_ping=True,
 )
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -158,5 +169,18 @@ from sqlalchemy import text
 async def init_db() -> None:
     """Crée les tables si elles n'existent pas et active le mode WAL pour éviter tout verrouillage."""
     async with engine.begin() as conn:
-        await conn.execute(text("PRAGMA journal_mode=WAL;"))
+        if "sqlite" in settings.database_url:
+            await conn.execute(text("PRAGMA journal_mode=WAL;"))
+            await conn.execute(text("PRAGMA busy_timeout=60000;"))
+            await conn.execute(text("PRAGMA synchronous=NORMAL;"))
+            await conn.execute(text("PRAGMA foreign_keys=ON;"))
         await conn.run_sync(Base.metadata.create_all)
+
+        # Migrations légères (colonnes ajoutées sans Alembic)
+        if "sqlite" in settings.database_url:
+            result = await conn.execute(text("PRAGMA table_info(workflows)"))
+            columns = {row[1] for row in result.fetchall()}
+            if "options" not in columns:
+                await conn.execute(text("ALTER TABLE workflows ADD COLUMN options JSON DEFAULT '{}'"))
+            if "updates_stats" not in columns:
+                await conn.execute(text("ALTER TABLE workflows ADD COLUMN updates_stats JSON DEFAULT '{}'"))

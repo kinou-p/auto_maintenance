@@ -1,7 +1,3 @@
-/**
- * ImageComparer - Comparateur d'images avant/après avec slider.
- */
-
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/Badge';
@@ -41,7 +37,6 @@ export function ImageComparer({
   const [viewMode, setViewMode] = useState<'slider' | 'side-by-side' | 'diff'>(defaultViewMode);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Mettre à jour le mode de vue quand defaultViewMode change
   useEffect(() => {
     setViewMode(defaultViewMode);
   }, [defaultViewMode]);
@@ -72,7 +67,6 @@ export function ImageComparer({
 
   const getScreenshotUrl = (path: string | undefined | null) => {
     if (!path) return '';
-    // Normaliser les antislashs Windows (\) en slashs (/)
     const normalized = path.replace(/\\/g, '/');
     const match = normalized.match(/data\/screenshots\/(.+)/i);
     if (match) {
@@ -86,12 +80,12 @@ export function ImageComparer({
 
   return (
     <div className="space-y-3 border border-border rounded-lg p-4">
-      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <button
             onClick={onToggleCollapse}
             className="p-0.5 hover:bg-muted rounded transition-colors"
+            aria-label={isCollapsed ? 'Déplier' : 'Replier'}
           >
             {isCollapsed ? (
               <ChevronDown className="h-4 w-4" />
@@ -130,7 +124,6 @@ export function ImageComparer({
 
       {!isCollapsed && (
         <>
-          {/* View mode toggle */}
           <div className="flex gap-1">
             {(['slider', 'side-by-side', 'diff'] as const).map((mode) => (
               <button
@@ -148,7 +141,6 @@ export function ImageComparer({
             ))}
           </div>
 
-          {/* Comparaison */}
           {viewMode === 'slider' && (
             <div
               ref={containerRef}
@@ -162,20 +154,19 @@ export function ImageComparer({
               onTouchEnd={() => setIsDragging(false)}
               onTouchMove={handleTouchMove}
             >
-              {/* Image après (fond) */}
               <img
                 src={getScreenshotUrl(afterSrc)}
                 alt="Après"
+                loading="lazy"
                 className="absolute inset-0 w-full h-full object-cover object-top"
               />
-              {/* Image avant (imposée par dessus avec clip-path) */}
               <img
                 src={getScreenshotUrl(beforeSrc)}
                 alt="Avant"
+                loading="lazy"
                 className="absolute inset-0 w-full h-full object-cover object-top"
                 style={{ clipPath: `inset(0 ${100 - sliderPos}% 0 0)` }}
               />
-              {/* Ligne du slider */}
               <div
                 className="absolute top-0 bottom-0 w-0.5 bg-white shadow-lg z-10"
                 style={{ left: `${sliderPos}%` }}
@@ -184,7 +175,6 @@ export function ImageComparer({
                   <span className="text-xs font-bold text-gray-800">⇔</span>
                 </div>
               </div>
-              {/* Labels */}
               <span className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded">
                 AVANT
               </span>
@@ -201,6 +191,7 @@ export function ImageComparer({
                 <img
                   src={getScreenshotUrl(beforeSrc)}
                   alt="Avant"
+                  loading="lazy"
                   className="w-full rounded-lg border border-border"
                 />
               </div>
@@ -209,6 +200,7 @@ export function ImageComparer({
                 <img
                   src={getScreenshotUrl(afterSrc)}
                   alt="Après"
+                  loading="lazy"
                   className="w-full rounded-lg border border-border"
                 />
               </div>
@@ -221,6 +213,7 @@ export function ImageComparer({
               <img
                 src={getScreenshotUrl(diffSrc)}
                 alt="Diff"
+                loading="lazy"
                 className="w-full rounded-lg border border-border"
               />
             </div>

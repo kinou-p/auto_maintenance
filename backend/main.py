@@ -64,7 +64,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         settings.screenshots_dir,
         settings.reports_dir,
         settings.uploads_dir,
-        settings.ddev_projects_dir,
+        settings.effective_ddev_projects_dir,
+        settings.wp_cache_dir,
     ]:
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -120,12 +121,18 @@ app.include_router(updates_vrt_router, prefix="/api")
 app.include_router(system_router, prefix="/api")
 
 # ── Fichiers statiques ───────────────────────────────────────────
-# Monter le dossier data pour servir screenshots et rapports
-app.mount(
-    "/static/data",
-    StaticFiles(directory=str(settings.data_dir)),
-    name="data",
-)
+# Monter screenshots/rapports uniquement (pas les uploads .wpress)
+_static_dirs = {
+    "screenshots": settings.screenshots_dir,
+    "reports": settings.reports_dir,
+}
+for mount_name, directory in _static_dirs.items():
+    directory.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        f"/static/data/{mount_name}",
+        StaticFiles(directory=str(directory)),
+        name=mount_name,
+    )
 
 
 # ── WebSocket ─────────────────────────────────────────────────────
@@ -135,9 +142,9 @@ async def websocket_global(websocket: WebSocket) -> None:
     await ws_manager.connect(websocket)
     try:
         while True:
-            # Garder la connexion ouverte
             data = await websocket.receive_text()
-            # On peut recevoir des commandes du client ici
+            if data in ("ping", '{"type":"ping"}'):
+                await websocket.send_text('{"type":"pong"}')
     except WebSocketDisconnect:
         await ws_manager.disconnect(websocket)
 
@@ -149,6 +156,8 @@ async def websocket_project(websocket: WebSocket, project_id: int) -> None:
     try:
         while True:
             data = await websocket.receive_text()
+            if data in ("ping", '{"type":"ping"}'):
+                await websocket.send_text('{"type":"pong"}')
     except WebSocketDisconnect:
         await ws_manager.disconnect(websocket, project_id)
 

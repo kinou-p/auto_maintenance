@@ -1,7 +1,3 @@
-/**
- * Auto Maintenance - Client API.
- */
-
 import type {
   HealthCheck,
   Project,
@@ -14,11 +10,17 @@ import type {
 
 const API_BASE = '/api';
 
+let globalErrorHandler: ((message: string) => void) | null = null;
+
+export function setGlobalErrorHandler(handler: (message: string) => void) {
+  globalErrorHandler = handler;
+}
+
 async function apiFetch<T>(
   path: string,
   options?: RequestInit & { timeout?: number },
 ): Promise<T> {
-  const timeout = options?.timeout || 30000; // Défaut 30s
+  const timeout = options?.timeout || 30000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 
@@ -36,30 +38,31 @@ async function apiFetch<T>(
 
     if (!res.ok) {
       const error = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(error.detail || `API Error ${res.status}`);
+      const message = error.detail || `API Error ${res.status}`;
+      throw new Error(message);
     }
 
     return res.json();
   } catch (error) {
     clearTimeout(timeoutId);
 
-    // Si c'est une erreur d'abort (timeout)
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`L'opération a dépassé le délai maximum (${timeout / 1000}s). Elle continue peut-être en arrière-plan.`);
+      const message = `L'opération a dépassé le délai maximum (${timeout / 1000}s). Elle continue peut-être en arrière-plan.`;
+      globalErrorHandler?.(message);
+      throw new Error(message);
     }
 
-    // Si c'est une erreur réseau (backend inaccessible)
     if (error instanceof TypeError && error.message === 'Failed to fetch') {
-      throw new Error('Impossible de contacter le serveur backend. Vérifiez qu\'il est démarré.');
+      const message = 'Impossible de contacter le serveur backend. Vérifiez qu\'il est démarré.';
+      globalErrorHandler?.(message);
+      throw new Error(message);
     }
     throw error;
   }
 }
 
-// ── Health ────────────────────────────────────────────────────────
 export const checkHealth = () => apiFetch<HealthCheck>('/health');
 
-// ── Projects ─────────────────────────────────────────────────────
 export const getProjects = () =>
   apiFetch<{ projects: Project[]; total: number }>('/projects/');
 
@@ -71,14 +74,26 @@ export const getProjectStatus = (id: number) =>
     `/projects/${id}/status`,
   );
 
+interface UploadController {
+  abort: () => void;
+}
+
 function uploadWithProgress<T>(
   url: string,
   formData: FormData,
   onProgress?: (progress: number) => void,
+  controller?: UploadController,
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
+
+    if (controller) {
+      controller.abort = () => {
+        xhr.abort();
+        reject(new Error('Upload annulé'));
+      };
+    }
 
     if (onProgress && xhr.upload) {
       xhr.upload.onprogress = (e) => {
@@ -108,6 +123,7 @@ function uploadWithProgress<T>(
 
     xhr.onerror = () => reject(new Error('Erreur réseau lors de l\'envoi du fichier.'));
     xhr.ontimeout = () => reject(new Error('Le délai d\'envoi a expiré.'));
+    xhr.onabort = () => reject(new Error('Upload annulé'));
 
     xhr.send(formData);
   });
@@ -119,6 +135,7 @@ export const createProject = async (
   wpress?: File,
   localFilePath?: string,
   onProgress?: (progress: number) => void,
+  controller?: UploadController,
 ): Promise<Project> => {
   const formData = new FormData();
   formData.append('name', name);
@@ -126,7 +143,7 @@ export const createProject = async (
   if (wpress) formData.append('wpress_file', wpress);
   if (localFilePath) formData.append('local_file_path', localFilePath);
 
-  return uploadWithProgress<Project>(`${API_BASE}/projects/`, formData, onProgress);
+  return uploadWithProgress<Project>(`${API_BASE}/projects/`, formData, onProgress, controller);
 };
 
 export const listWpressFiles = () =>
@@ -135,13 +152,14 @@ export const listWpressFiles = () =>
 export const createProjectsBatch = async (
   wpressFiles: File[],
   onProgress?: (progress: number) => void,
+  controller?: UploadController,
 ): Promise<{ status: string; message: string; created: Project[]; errors: Array<{ file: string; error: string }> }> => {
   const formData = new FormData();
   wpressFiles.forEach((file) => {
     formData.append('wpress_files', file);
   });
 
-  return uploadWithProgress(`${API_BASE}/projects/batch`, formData, onProgress);
+  return uploadWithProgress(`${API_BASE}/projects/batch`, formData, onProgress, controller);
 };
 
 export const createProjectsFromLibrary = async (
@@ -156,13 +174,13 @@ export const createProjectsFromLibrary = async (
 export const deleteProject = (id: number) =>
   apiFetch<{ status: string; message: string }>(`/projects/${id}`, {
     method: 'DELETE',
-    timeout: 30000, // 30s - la requête retourne immédiatement, la suppression continue en arrière-plan
+    timeout: 30000,
   });
 
-export const deleteProjectsBatch = (ids: number[]) =>
+export const deleteProjectsBatch = (ids: number[], cleanupDdev = true) =>
   apiFetch<{ status: string; message: string; count: number }>('/projects/batch-delete', {
     method: 'POST',
-    body: JSON.stringify(ids), // FastAPI avec list[int] en body top-level
+    body: JSON.stringify({ project_ids: ids, cleanup_ddev: cleanupDdev }),
   });
 
 export const stopProject = (id: number) =>
@@ -183,13 +201,13 @@ export const startProject = (id: number) =>
 export const restartProject = (id: number) =>
   apiFetch<{ status: string; message: string }>(`/projects/${id}/restart`, {
     method: 'POST',
-    timeout: 180000, // 3 min pour le restart DDEV
+    timeout: 180000,
   });
 
 export const recreateProject = (id: number) =>
   apiFetch<{ status: string; message: string }>(`/projects/${id}/recreate`, {
     method: 'POST',
-    timeout: 300000, // 5 min pour le recreate complet
+    timeout: 300000,
   });
 
 export const resetProject = (id: number) =>
@@ -198,7 +216,6 @@ export const resetProject = (id: number) =>
     timeout: 120000,
   });
 
-// ── Workflows ────────────────────────────────────────────────────
 export const startWorkflow = (
   projectId: number,
   steps?: string[],
@@ -220,7 +237,6 @@ export const startBatchWorkflows = (projectIds: number[], importOnly?: boolean) 
     method: 'POST',
     body: JSON.stringify({ project_ids: projectIds, import_only: importOnly }),
   });
-
 
 export const getWorkflow = (id: number) =>
   apiFetch<Workflow>(`/workflows/${id}`);
@@ -258,8 +274,6 @@ export const getWorkflowQueue = () =>
     '/workflows/queue',
   );
 
-
-// ── Updates ──────────────────────────────────────────────────────
 export const getUpdates = (projectId: number) =>
   apiFetch<{
     project_id: number;
@@ -290,14 +304,12 @@ export const applyUpdates = (
     }),
   });
 
-// ── VRT ──────────────────────────────────────────────────────────
 export const getVRTReport = (projectId: number) =>
   apiFetch<VRTReport>(`/projects/${projectId}/vrt`);
 
 export const getVRTJsonReport = (projectId: number) =>
   apiFetch<Record<string, unknown>>(`/projects/${projectId}/vrt/report-json`);
 
-// ── Sudoers ──────────────────────────────────────────────────────
 export const setupSudoers = () =>
   apiFetch<{ status: string; message: string }>('/setup/sudoers', {
     method: 'POST',
@@ -308,8 +320,6 @@ export const resetDDEVGlobal = () =>
     method: 'POST',
     timeout: 60000,
   });
-
-// --- System Containers ---
 
 export const listContainers = () =>
   apiFetch<DDEVContainer[]>('/system/containers');

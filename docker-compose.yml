@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     container_name: auto_maintenance_backend
-    restart: always
+    restart: unless-stopped
     ports:
       - "8800:8000"
     volumes:
@@ -12,10 +12,21 @@ services:
       - ./data:/app/data
       - ./.env:/app/.env
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${HOST_DDEV_PROJECTS:-/tmp/ddev-projects}:${HOST_DDEV_PROJECTS:-/tmp/ddev-projects}
+      # Chemin hôte = chemin container pour DDEV (Docker-in-Docker)
+      - ${HOST_DDEV_PROJECTS:-./data/ddev-projects}:${DDEV_PROJECTS_DIR:-/app/data/ddev-projects}
     environment:
       - PYTHONUNBUFFERED=1
       - DDEV_ALLOW_ROOT=true
+      - DDEV_PROJECTS_DIR=${DDEV_PROJECTS_DIR:-/app/data/ddev-projects}
+      - HOST_DDEV_PROJECTS=${HOST_DDEV_PROJECTS:-}
+      - MAX_CONCURRENT_WORKFLOWS=${MAX_CONCURRENT_WORKFLOWS:-2}
+      - MAX_UPLOAD_SIZE_MB=${MAX_UPLOAD_SIZE_MB:-2048}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -24,8 +35,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: auto_maintenance_frontend
-    restart: always
+    restart: unless-stopped
     ports:
       - "5180:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
