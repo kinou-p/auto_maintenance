@@ -138,6 +138,46 @@ async def start_workflows_batch(project_ids: list[int]) -> list[WorkflowResponse
     return created_workflows
 
 
+@router.get("/queue")
+async def get_workflow_queue() -> dict:
+    """Récupère la liste complète des workflows en cours (RUNNING) et en attente (PENDING)."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Workflow, Project.name, Project.domain)
+            .join(Project, Workflow.project_id == Project.id)
+            .where(Workflow.status.in_([WorkflowStatus.RUNNING, WorkflowStatus.PENDING]))
+            .order_by(Workflow.created_at.asc())
+        )
+        rows = result.all()
+
+        items = []
+        pending_counter = 0
+        for wf, project_name, domain in rows:
+            is_running = wf.status == WorkflowStatus.RUNNING
+            position = 0
+            if not is_running:
+                pending_counter += 1
+                position = pending_counter
+
+            items.append({
+                "id": wf.id,
+                "project_id": wf.project_id,
+                "project_name": project_name,
+                "domain": domain,
+                "status": wf.status.value if hasattr(wf.status, "value") else str(wf.status),
+                "current_step": wf.current_step,
+                "position": position,
+                "created_at": wf.created_at.isoformat() if wf.created_at else None,
+                "started_at": wf.started_at.isoformat() if wf.started_at else None,
+            })
+
+        return {
+            "queue": items,
+            "total_active": len([i for i in items if i["status"] == "running"]),
+            "total_pending": pending_counter,
+        }
+
+
 @router.get("/{workflow_id}", response_model=WorkflowResponse)
 async def get_workflow(workflow_id: int) -> WorkflowResponse:
     """Récupère le statut d'un workflow."""
@@ -216,42 +256,5 @@ async def get_workflow_logs(workflow_id: int) -> dict:
         }
 
 
-@router.get("/queue")
-async def get_workflow_queue() -> dict:
-    """Récupère la liste complète des workflows en cours (RUNNING) et en attente (PENDING)."""
-    async with async_session() as session:
-        result = await session.execute(
-            select(Workflow, Project.name, Project.domain)
-            .join(Project, Workflow.project_id == Project.id)
-            .where(Workflow.status.in_([WorkflowStatus.RUNNING, WorkflowStatus.PENDING]))
-            .order_by(Workflow.created_at.asc())
-        )
-        rows = result.all()
 
-        items = []
-        pending_counter = 0
-        for wf, project_name, domain in rows:
-            is_running = wf.status == WorkflowStatus.RUNNING
-            position = 0
-            if not is_running:
-                pending_counter += 1
-                position = pending_counter
-
-            items.append({
-                "id": wf.id,
-                "project_id": wf.project_id,
-                "project_name": project_name,
-                "domain": domain,
-                "status": wf.status.value if hasattr(wf.status, "value") else str(wf.status),
-                "current_step": wf.current_step,
-                "position": position,
-                "created_at": wf.created_at.isoformat() if wf.created_at else None,
-                "started_at": wf.started_at.isoformat() if wf.started_at else None,
-            })
-
-        return {
-            "queue": items,
-            "total_active": len([i for i in items if i["status"] == "running"]),
-            "total_pending": pending_counter,
-        }
 
