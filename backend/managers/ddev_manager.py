@@ -156,17 +156,44 @@ class DDEVManager:
         )
         await self._log("info", "Configuration MariaDB optimisée (fast transaction log applied)")
 
-    async def start(self) -> CommandResult:
-        """Démarre les conteneurs DDEV du projet."""
-        await self._log("info", f"Démarrage des conteneurs DDEV...")
-        result = await run_ddev_command("ddev start", str(self.project_dir), timeout=180)
+    async def start(self, retries: int = 3) -> CommandResult:
+        """Démarre les conteneurs DDEV du projet avec retries automatique pour gérer les conflits Docker/ddev-router temporaires."""
+        import asyncio
+        await self._log("info", "Démarrage des conteneurs DDEV...")
 
-        if result.success:
-            await self._log("success", "Conteneurs DDEV démarrés avec succès.")
-        else:
-            await self._log("error", f"Échec du démarrage DDEV : {result.stderr}")
+        last_result: Optional[CommandResult] = None
 
-        return result
+        for attempt in range(1, retries + 1):
+            result = await run_ddev_command("ddev start", str(self.project_dir), timeout=180)
+            last_result = result
+
+            if result.success:
+                await self._log("success", "Conteneurs DDEV démarrés avec succès.")
+                return result
+
+            err_lower = (result.stderr or "").lower() + (result.stdout or "").lower()
+            is_transient_docker_error = any(
+                kw in err_lower
+                for kw in [
+                    "already in progress",
+                    "failed to start ddev-router",
+                    "conflict",
+                    "is already in use",
+                    "driver failed programming external connectivity",
+                ]
+            )
+
+            if is_transient_docker_error and attempt < retries:
+                await self._log(
+                    "warning",
+                    f"Conflit Docker/ddev-router temporaire ({attempt}/{retries}). Nouvelle tentative dans 4s...",
+                )
+                await asyncio.sleep(4)
+            else:
+                break
+
+        await self._log("error", f"Échec du démarrage DDEV : {last_result.stderr if last_result else 'Erreur inconnue'}")
+        return last_result if last_result else CommandResult(returncode=1, stdout="", stderr="Échec ddev start", command="ddev start")
 
     async def stop(self) -> CommandResult:
         """Arrête les conteneurs DDEV du projet."""
