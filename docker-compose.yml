@@ -16,6 +16,8 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - DDEV_ALLOW_ROOT=true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   frontend:
     build:
