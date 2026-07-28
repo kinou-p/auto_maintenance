@@ -12,7 +12,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import selectfrom backend.core.config import settings
+from sqlalchemy import select
+from backend.core.config import settings
 from backend.models.database import Workflow, WorkflowStatus, async_session
 from backend.managers.workflow_orchestrator import WorkflowOrchestrator, get_active_workflow
 from backend.core.websocket import ws_manager
