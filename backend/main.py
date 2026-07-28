@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import sys
 import asyncio
+import shutil
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -188,16 +189,3 @@ async def setup_sudoers() -> dict:
         return {"status": "success", "message": "Permissions sudoers configurées."}
     return {"status": "error", "message": "Échec de la configuration sudoers."}
 
-
-@app.post("/api/system/ddev-reset")
-async def global_ddev_reset() -> dict:
-    """Arrête tous les projets DDEV et les services partagés (power-off)."""
-    from backend.utils.command import run_command
-    
-    # ddev power-off arrête tous les projets et le routeur
-    result = await run_command("ddev power-off", timeout=60)
-    
-    if result.success:
-        return {"status": "success", "message": "DDEV a été réinitialisé (power-off)."}
-    
-    return {"status": "error", "message": f"Échec de la réinitialisation : {result.stderr}"}

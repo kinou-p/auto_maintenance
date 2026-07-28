@@ -26,6 +26,7 @@ env/
 # Base de données
 data/*.db
 data/*.db*
+data/cache/
 data/scratch/
 
 # Données générées

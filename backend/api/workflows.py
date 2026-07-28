@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Optional
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
@@ -60,8 +61,9 @@ async def start_workflow(request: WorkflowStart) -> WorkflowResponse:
         options = {}
         if request.steps:
             options["steps"] = request.steps
-        if request.selected_updates:
-            options["selected_updates"] = request.selected_updates
+        normalized_selected_updates = _normalize_selected_updates(request.selected_updates)
+        if normalized_selected_updates:
+            options["selected_updates"] = normalized_selected_updates
         if request.import_only:
             options["import_only"] = True
 
@@ -101,6 +103,16 @@ from pydantic import BaseModel
 class BatchWorkflowRequest(BaseModel):
     project_ids: list[int]
     import_only: Optional[bool] = False
+
+
+def _normalize_selected_updates(value: object) -> dict:
+    """Normalise selected_updates pour garantir un format dict côté orchestrateur."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list):
+        items = [str(v) for v in value if isinstance(v, (str, int, float))]
+        return {"plugin_names": items}
+    return {}
 
 
 @router.post("/batch", response_model=list[WorkflowResponse], status_code=201)
@@ -268,7 +280,6 @@ async def get_workflow_logs(workflow_id: int) -> dict:
             "status": workflow.status.value if workflow.status else "unknown",
             "logs": workflow.logs or [],
         }
-
 
 
 

@@ -60,6 +60,17 @@ def extract_wpress_sync(
 
                 # Normaliser le chemin du fichier relatif
                 rel_fn = full_rel.lstrip("/").lstrip("\\").replace("/", os.sep).replace("\\", os.sep)
+                rel_parts = Path(rel_fn).parts
+                if (
+                    not rel_parts
+                    or any(part == ".." for part in rel_parts)
+                    or Path(rel_fn).is_absolute()
+                ):
+                    f.seek(sz, 1)
+                    pos += sz
+                    extracted_count += 1
+                    total_bytes += sz
+                    continue
                 out_file = target_path / rel_fn
 
                 # Protection des fichiers coeur WordPress à la racine (index.php, wp-config.php)

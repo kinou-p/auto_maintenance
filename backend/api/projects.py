@@ -24,6 +24,14 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
+def _resolve_upload_path_safely(relative_path: str) -> Path:
+    """Résout un chemin utilisateur dans uploads_dir en bloquant les traversals."""
+    uploads_root = settings.uploads_dir.resolve()
+    candidate = (uploads_root / relative_path).resolve()
+    if uploads_root != candidate and uploads_root not in candidate.parents:
+        raise HTTPException(400, "Chemin de fichier invalide")
+    return candidate
+
 
 @router.post("/", response_model=ProjectResponse, status_code=201)
 async def create_project(
@@ -62,7 +70,7 @@ async def create_project(
     
     if local_file_path:
         # Utilisation d'un fichier existant
-        source_path = settings.uploads_dir / local_file_path
+        source_path = _resolve_upload_path_safely(local_file_path)
         if not source_path.exists() or not source_path.is_file():
              raise HTTPException(400, f"Fichier local introuvable : {local_file_path}")
         if not source_path.name.endswith(".wpress"):
@@ -78,7 +86,10 @@ async def create_project(
         # On évite le sous-dossier par projet pour créer une "librairie" commune
         upload_dir = settings.uploads_dir
         upload_dir.mkdir(parents=True, exist_ok=True)
-        wpress_dest = upload_dir / wpress_file.filename
+        safe_filename = Path(wpress_file.filename).name
+        if not safe_filename.endswith(".wpress"):
+            raise HTTPException(400, "Nom de fichier upload invalide")
+        wpress_dest = upload_dir / safe_filename
 
         with open(wpress_dest, "wb") as f:
             shutil.copyfileobj(wpress_file.file, f)
@@ -179,7 +190,14 @@ async def create_projects_batch(
             # Sauvegarder le fichier .wpress directement dans data/uploads/
             upload_dir = settings.uploads_dir
             upload_dir.mkdir(parents=True, exist_ok=True)
-            wpress_dest = upload_dir / wpress_file.filename
+            safe_filename = Path(wpress_file.filename).name
+            if not safe_filename.endswith(".wpress"):
+                errors.append({
+                    "file": wpress_file.filename,
+                    "error": "Nom de fichier upload invalide"
+                })
+                continue
+            wpress_dest = upload_dir / safe_filename
             
             # Lire et sauvegarder le contenu
             with open(wpress_dest, "wb") as f:
@@ -233,15 +251,14 @@ async def create_projects_from_library(
 
     for filename in payload.files:
         try:
-            # Sécurité : empêcher le directory traversal
-            if ".." in filename or filename.startswith("/"):
-                 errors.append({
+            try:
+                source_path = _resolve_upload_path_safely(filename)
+            except HTTPException as exc:
+                errors.append({
                     "file": filename,
-                    "error": "Chemin de fichier invalide"
+                    "error": str(exc.detail),
                 })
-                 continue
-                 
-            source_path = settings.uploads_dir / filename
+                continue
             
             if not source_path.exists() or not source_path.is_file():
                 errors.append({

@@ -69,6 +69,7 @@ class ConnectionManager:
         # Nettoyage des connexions mortes
         for ws in dead:
             await self.disconnect(ws, project_id)
+            await self.disconnect(ws, None)
 
     async def broadcast(self, message: dict[str, Any]) -> None:
         """Envoie un message à toutes les connexions."""

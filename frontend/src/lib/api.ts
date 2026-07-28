@@ -202,7 +202,7 @@ export const resetProject = (id: number) =>
 export const startWorkflow = (
   projectId: number,
   steps?: string[],
-  selectedUpdates?: string[],
+  selectedUpdates?: { update_core?: boolean; plugin_names?: string[]; theme_names?: string[] },
   importOnly?: boolean,
 ) =>
   apiFetch<Workflow>('/workflows/', {
