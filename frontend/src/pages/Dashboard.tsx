@@ -159,7 +159,7 @@ export function Dashboard() {
         .then(setVrtReport)
         .catch(() => setVrtReport(null));
     }
-  }, [currentProject]);
+  }, [currentProject?.id]);
 
   // Vérifier et restaurer le workflow actif au chargement
   useEffect(() => {
@@ -204,7 +204,7 @@ export function Dashboard() {
       });
 
     return () => window.removeEventListener('app:queue_updated', handleStatusUpdate);
-  }, [currentProject, setCurrentWorkflow]);
+  }, [currentProject?.id, setCurrentWorkflow]);
 
   const [queueInfo, setQueueInfo] = useState<{ total_active: number; total_pending: number } | null>(null);
   const [showQueueModal, setShowQueueModal] = useState(false);
@@ -649,7 +649,7 @@ export function Dashboard() {
                       variant="outline"
                       size="sm"
                       onClick={handleStartImportOnlyWorkflow}
-                      disabled={workflowLoading || currentProject.status === 'stopped'}
+                      disabled={workflowLoading}
                       title="Lancer le projet et importer le site .wpress sans faire de maintenance"
                       className="border-primary/30 text-primary hover:bg-primary/10"
                     >
@@ -660,7 +660,7 @@ export function Dashboard() {
                     <Button
                       size="sm"
                       onClick={handleStartWorkflow}
-                      disabled={workflowLoading || currentProject.status === 'stopped'}
+                      disabled={workflowLoading}
                     >
                       <Play className="mr-1.5 h-4 w-4" />
                       Lancer la maintenance
