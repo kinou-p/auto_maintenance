@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { getProjects, deleteProject, deleteProjectsBatch, startBatchWorkflows } from '@/lib/api';
+import { getProjects, deleteProject, deleteProjectsBatch, startBatchWorkflows, resetProject } from '@/lib/api';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -124,20 +124,42 @@ export function ProjectList() {
   const handleBatchDelete = async () => {
     if (selectedProjects.size === 0) return;
 
-    if (!confirm(`Supprimer ces ${selectedProjects.size} projets ? Cette action est irréversible.`)) {
+    if (!confirm(`Supprimer définitivement ces ${selectedProjects.size} projets ? Cette action est irréversible.`)) {
       return;
     }
 
     setBatchLoading(true);
     try {
       await deleteProjectsBatch(Array.from(selectedProjects));
-      // Recharger la liste pour voir les statuts "deleting"
       await fetchProjects();
       setSelectionMode(false);
       setSelectedProjects(new Set());
     } catch (err) {
       console.error('Erreur batch delete:', err);
       alert('Erreur lors de la suppression groupée.');
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  const handleBatchReset = async () => {
+    if (selectedProjects.size === 0) return;
+
+    if (!confirm(`Réinitialiser les ${selectedProjects.size} projet(s) sélectionné(s) ?\nLeurs conteneurs DDEV et rapports seront réinitialisés, et leur statut repassera à 'Créé' (sans supprimer les fichiers .wpress).`)) {
+      return;
+    }
+
+    setBatchLoading(true);
+    try {
+      for (const id of Array.from(selectedProjects)) {
+        await resetProject(id);
+      }
+      await fetchProjects();
+      setSelectionMode(false);
+      setSelectedProjects(new Set());
+    } catch (err) {
+      console.error('Erreur batch reset:', err);
+      alert('Erreur lors de la réinitialisation groupée.');
     } finally {
       setBatchLoading(false);
     }
@@ -152,7 +174,7 @@ export function ProjectList() {
   };
 
   const handleDelete = async (project: Project) => {
-    if (!confirm(`Supprimer le projet ${project.name} ?`)) return;
+    if (!confirm(`Supprimer définitivement le projet ${project.name} ?`)) return;
 
     setActionLoading({ projectId: project.id, action: 'delete' });
     try {
@@ -163,6 +185,20 @@ export function ProjectList() {
       await fetchProjects();
     } catch (err) {
       console.error('Error deleting project:', err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleReset = async (project: Project) => {
+    if (!confirm(`Réinitialiser le projet "${project.name}" ?\nLe conteneur DDEV et les rapports seront supprimés, et le statut repassera à 'Créé' (le fichier .wpress est conservé).`)) return;
+
+    setActionLoading({ projectId: project.id, action: 'reset' });
+    try {
+      await resetProject(project.id);
+      await fetchProjects();
+    } catch (err) {
+      console.error('Error resetting project:', err);
     } finally {
       setActionLoading(null);
     }
@@ -200,12 +236,28 @@ export function ProjectList() {
                 disabled={selectedProjects.size === 0 || batchLoading}
                 onClick={handleBatchDelete}
                 className="h-7 text-xs px-2"
-                title="Supprimer la sélection"
+                title="Supprimer définitivement la sélection"
               >
                 {batchLoading ? (
                   <RefreshCw className="h-3 w-3 animate-spin" />
                 ) : (
                   <Trash2 className="h-3 w-3" />
+                )}
+                <span className="ml-1.5 hidden sm:inline">{selectedProjects.size}</span>
+              </Button>
+
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={selectedProjects.size === 0 || batchLoading}
+                onClick={handleBatchReset}
+                className="h-7 text-xs px-2 text-rose-600 border-rose-200 hover:bg-rose-50 dark:border-rose-900/50"
+                title="Réinitialiser la sélection"
+              >
+                {batchLoading ? (
+                  <RefreshCw className="h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3 w-3" />
                 )}
                 <span className="ml-1.5 hidden sm:inline">{selectedProjects.size}</span>
               </Button>
@@ -347,13 +399,29 @@ export function ProjectList() {
                 </div>
 
                 {isSelected && !isDeleting && !selectionMode && (
-                  <div className="flex items-center justify-end gap-1 mt-3 pt-2 border-t border-border/50 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-end gap-1.5 mt-3 pt-2 border-t border-border/50 animate-in fade-in duration-200">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-rose-600 border-rose-200 hover:bg-rose-50 dark:border-rose-900/50"
+                      onClick={(e) => { e.stopPropagation(); handleReset(project); }}
+                      title="Réinitialiser le projet"
+                      disabled={actionLoading?.projectId === project.id}
+                    >
+                      {actionLoading?.projectId === project.id && actionLoading.action === 'reset' ? (
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3.5 w-3.5 mr-1" />
+                      )}
+                      Reset
+                    </Button>
+
                     <Button
                       variant="ghost"
                       size="sm"
                       className="h-7 px-2 hover:bg-background shadow-sm border border-border/50 hover:border-border hover:text-destructive"
                       onClick={(e) => { e.stopPropagation(); handleDelete(project); }}
-                      title="Supprimer"
+                      title="Supprimer définitivement"
                       disabled={actionLoading?.projectId === project.id}
                     >
                       {actionLoading?.projectId === project.id && actionLoading.action === 'delete' ? (
