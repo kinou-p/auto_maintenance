@@ -18,12 +18,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends ddev docker.io \
     && rm -rf /var/lib/apt/lists/*
 
+# Configurer pwuser avec accès docker et ddev
+RUN groupadd -g 999 hostdocker || true && \
+    usermod -aG hostdocker pwuser || true && \
+    mkdir -p /home/pwuser/ddev-projects /app/data && \
+    chown -R pwuser:pwuser /app /home/pwuser
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./backend/
 COPY cli.py start.py ./
+
+RUN chown -R pwuser:pwuser /app
+
+USER pwuser
 
 EXPOSE 8000
 

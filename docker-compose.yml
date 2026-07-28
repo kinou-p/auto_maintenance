@@ -11,7 +11,7 @@ services:
       - ./data:/app/data
       - ./.env:/app/.env
       - /var/run/docker.sock:/var/run/docker.sock
-      - ~/ddev-projects:/root/ddev-projects
+      - ~/ddev-projects:/home/pwuser/ddev-projects
     environment:
       - PYTHONUNBUFFERED=1
       - DDEV_ALLOW_ROOT=true
