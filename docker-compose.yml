@@ -12,7 +12,7 @@ services:
       - ./data:/app/data
       - ./.env:/app/.env
       - /var/run/docker.sock:/var/run/docker.sock
-      - ~/ddev-projects:/home/pwuser/ddev-projects
+      - ${HOST_DDEV_PROJECTS:-/tmp/ddev-projects}:${HOST_DDEV_PROJECTS:-/tmp/ddev-projects}
     environment:
       - PYTHONUNBUFFERED=1
       - DDEV_ALLOW_ROOT=true
