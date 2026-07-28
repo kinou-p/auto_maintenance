@@ -44,12 +44,19 @@ def extract_wpress_sync(
                 # Reconstruire le chemin relatif complet en combinant prefix et fn
                 if prefix and prefix != ".":
                     p_clean = prefix.lstrip("/").lstrip("\\").replace("\\", "/")
+                    if p_clean.startswith("wp-includes/") or p_clean.startswith("wp-admin/") or p_clean in ("wp-includes", "wp-admin"):
+                        f.seek(sz, 1)
+                        pos += sz
+                        extracted_count += 1
+                        total_bytes += sz
+                        continue
                     if p_clean.startswith("themes/") or p_clean.startswith("plugins/") or p_clean.startswith("uploads/") or p_clean.startswith("mu-plugins/") or p_clean.startswith("languages/"):
                         full_rel = f"wp-content/{p_clean}/{fn}"
                     else:
                         full_rel = f"{p_clean}/{fn}"
                 else:
                     full_rel = fn
+
 
                 # Normaliser le chemin du fichier relatif
                 rel_fn = full_rel.lstrip("/").lstrip("\\").replace("/", os.sep).replace("\\", os.sep)
