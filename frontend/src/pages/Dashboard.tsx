@@ -491,29 +491,30 @@ export function Dashboard() {
           {currentProject ? (
             <>
               {/* Project Header */}
-              <div className="px-6 py-4 border-b border-border">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-lg font-semibold">{currentProject.name}</h2>
+              <div className="px-6 py-3 border-b border-border space-y-2">
+                {/* Ligne 1 : titre + contrôles DDEV */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <h2 className="text-lg font-semibold truncate">{currentProject.name}</h2>
                     <a
                       href={`http://${currentProject.domain}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-sm text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"
                     >
-                      <Globe className="h-3 w-3" />
-                      {currentProject.domain}
+                      <Globe className="h-3 w-3 shrink-0" />
+                      <span className="truncate">{currentProject.domain}</span>
                     </a>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => setShowLogs(!showLogs)}
                       title={showLogs ? "Masquer les logs" : "Voir les logs"}
                     >
-                      <FileText className="mr-2 h-4 w-4" />
-                      {showLogs ? 'Masquer Logs' : 'Voir Logs'}
+                      <FileText className="h-4 w-4" />
+                      <span className="hidden sm:inline ml-1.5">{showLogs ? 'Logs ↑' : 'Logs'}</span>
                     </Button>
                     {currentWorkflow?.status === 'running' ? (
                       <Button
@@ -521,20 +522,20 @@ export function Dashboard() {
                         size="sm"
                         onClick={handleCancelWorkflow}
                       >
-                        <StopCircle className="mr-2 h-4 w-4" />
+                        <StopCircle className="mr-1.5 h-4 w-4" />
                         Annuler
                       </Button>
                     ) : (
-                      <div className="flex items-center gap-2">
+                      <>
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={handleStartProject}
                           disabled={workflowLoading || ddevStatus === 'running'}
+                          title="Démarrer DDEV"
                           className="text-green-600 border-green-200 hover:bg-green-50"
                         >
-                          <Play className="mr-2 h-4 w-4" />
-                          Démarrer
+                          <Play className="h-4 w-4" />
                         </Button>
 
                         <Button
@@ -542,10 +543,10 @@ export function Dashboard() {
                           size="sm"
                           onClick={handlePauseProject}
                           disabled={workflowLoading || ddevStatus === 'paused' || ddevStatus === 'stopped' || ddevStatus === 'unknown'}
+                          title="Pause DDEV"
                           className="text-amber-600 border-amber-200 hover:bg-amber-50"
                         >
-                          <Pause className="mr-2 h-4 w-4" />
-                          Pause
+                          <Pause className="h-4 w-4" />
                         </Button>
 
                         <Button
@@ -553,10 +554,10 @@ export function Dashboard() {
                           size="sm"
                           onClick={handleStopProject}
                           disabled={workflowLoading || ddevStatus === 'stopped' || ddevStatus === 'unknown'}
+                          title="Arrêter DDEV"
                           className="text-orange-600 border-orange-200 hover:bg-orange-50"
                         >
-                          <Square className="mr-2 h-4 w-4" />
-                          Arrêter
+                          <Square className="h-4 w-4" />
                         </Button>
 
                         <Button
@@ -564,10 +565,10 @@ export function Dashboard() {
                           size="sm"
                           onClick={handleRestartProject}
                           disabled={workflowLoading}
+                          title="Redémarrer DDEV"
                           className="text-blue-600 border-blue-200 hover:bg-blue-50"
                         >
-                          <RotateCcw className="mr-2 h-4 w-4" />
-                          Redémarrer
+                          <RotateCcw className="h-4 w-4" />
                         </Button>
 
                         <Button
@@ -575,54 +576,56 @@ export function Dashboard() {
                           size="sm"
                           onClick={handleRecreateProject}
                           disabled={workflowLoading}
+                          title="Recréer le projet"
                           className="text-purple-600 border-purple-200 hover:bg-purple-50"
                         >
-                          <Hammer className="mr-2 h-4 w-4" />
-                          Recréer
+                          <Hammer className="h-4 w-4" />
                         </Button>
-
-                        <div className="h-6 w-px bg-border mx-1" />
-
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setShowQueueModal(true)}
-                          className="text-amber-600 border-amber-500/30 hover:bg-amber-500/10 dark:text-amber-400"
-                        >
-                          <Clock className="mr-2 h-4 w-4" />
-                          File d'attente
-                          {queueInfo && (queueInfo.total_active > 0 || queueInfo.total_pending > 0) && (
-                            <Badge variant="secondary" className="ml-1.5 px-1.5 py-0 text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-300">
-                              {queueInfo.total_active + queueInfo.total_pending}
-                            </Badge>
-                          )}
-                        </Button>
-
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleStartImportOnlyWorkflow}
-                          disabled={workflowLoading || currentProject.status === 'stopped'}
-                          title="Lancer le projet et importer le site .wpress sans faire de maintenance"
-                          className="border-primary/30 text-primary hover:bg-primary/10"
-                        >
-                          <Wrench className="mr-2 h-4 w-4" />
-                          Lancer & Importer seulement
-                        </Button>
-
-                        <Button
-                          size="sm"
-                          onClick={handleStartWorkflow}
-                          disabled={workflowLoading || currentProject.status === 'stopped'}
-                        >
-                          <Play className="mr-2 h-4 w-4" />
-                          Lancer la maintenance
-                        </Button>
-
-                      </div>
+                      </>
                     )}
                   </div>
                 </div>
+
+                {/* Ligne 2 : actions workflow */}
+                {currentWorkflow?.status !== 'running' && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowQueueModal(true)}
+                      className="text-amber-600 border-amber-500/30 hover:bg-amber-500/10 dark:text-amber-400"
+                    >
+                      <Clock className="mr-1.5 h-4 w-4" />
+                      File d'attente
+                      {queueInfo && (queueInfo.total_active > 0 || queueInfo.total_pending > 0) && (
+                        <Badge variant="secondary" className="ml-1.5 px-1.5 py-0 text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-300">
+                          {queueInfo.total_active + queueInfo.total_pending}
+                        </Badge>
+                      )}
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleStartImportOnlyWorkflow}
+                      disabled={workflowLoading || currentProject.status === 'stopped'}
+                      title="Lancer le projet et importer le site .wpress sans faire de maintenance"
+                      className="border-primary/30 text-primary hover:bg-primary/10"
+                    >
+                      <Wrench className="mr-1.5 h-4 w-4" />
+                      Lancer & Importer
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      onClick={handleStartWorkflow}
+                      disabled={workflowLoading || currentProject.status === 'stopped'}
+                    >
+                      <Play className="mr-1.5 h-4 w-4" />
+                      Lancer la maintenance
+                    </Button>
+                  </div>
+                )}
               </div>
 
               {/* Banner de notification / Feedback file d'attente */}
