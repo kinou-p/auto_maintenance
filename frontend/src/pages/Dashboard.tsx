@@ -226,6 +226,7 @@ export function Dashboard() {
 
   const handleStartWorkflow = async () => {
     if (!currentProject) return;
+    if (!confirm(`Lancer la procédure complète de maintenance pour "${currentProject.name}" ?`)) return;
     setWorkflowLoading(true);
     clearLogs();
 
@@ -260,6 +261,7 @@ export function Dashboard() {
 
   const handleStartImportOnlyWorkflow = async () => {
     if (!currentProject) return;
+    if (!confirm(`Lancer l'importation (sans maintenance) pour "${currentProject.name}" ?`)) return;
     setWorkflowLoading(true);
     clearLogs();
 
@@ -323,6 +325,7 @@ export function Dashboard() {
 
   const handlePauseProject = async () => {
     if (!currentProject) return;
+    if (!confirm(`Mettre en pause le projet ${currentProject.name} ?`)) return;
     setWorkflowLoading(true);
     try {
       await pauseProject(currentProject.id);
@@ -336,6 +339,7 @@ export function Dashboard() {
 
   const handleStopProject = async () => {
     if (!currentProject) return;
+    if (!confirm(`Arrêter les conteneurs du projet ${currentProject.name} ?`)) return;
     setWorkflowLoading(true);
     try {
       await stopProject(currentProject.id);
@@ -349,6 +353,7 @@ export function Dashboard() {
 
   const handleRestartProject = async () => {
     if (!currentProject) return;
+    if (!confirm(`Redémarrer les conteneurs DDEV du projet ${currentProject.name} ?`)) return;
     setWorkflowLoading(true);
     try {
       await restartProject(currentProject.id);
@@ -378,6 +383,7 @@ export function Dashboard() {
 
   const handleCancelWorkflow = async () => {
     if (!currentWorkflow) return;
+    if (!confirm(`Interrompre et annuler la maintenance en cours pour le projet ?`)) return;
     try {
       await cancelWorkflow(currentWorkflow.id);
     } catch (err) {

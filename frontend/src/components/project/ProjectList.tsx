@@ -91,6 +91,10 @@ export function ProjectList() {
   const handleBatchRun = async () => {
     if (selectedProjects.size === 0) return;
 
+    if (!confirm(`Lancer la maintenance pour ces ${selectedProjects.size} projet(s) sélectionné(s) ?`)) {
+      return;
+    }
+
     setBatchLoading(true);
     try {
       const workflows = await startBatchWorkflows(Array.from(selectedProjects));

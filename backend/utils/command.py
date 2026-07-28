@@ -199,7 +199,21 @@ async def run_ddev_command(
     """
     Exécute une commande DDEV dans le répertoire d'un projet.
     """
-    return await run_command(command, cwd=project_dir, timeout=timeout, retries=retries, on_output=on_output)
+    # Si project_dir existe, l'utiliser comme cwd
+    from pathlib import Path
+    p_path = Path(project_dir)
+    cwd = str(p_path) if p_path.exists() else None
+    
+    # Si p_path n'existe pas mais est un nom de projet, injecter -s <project>
+    if cwd is None and not command.startswith("ddev list"):
+        proj_name = p_path.name
+        # Ex: ddev start -> ddev start proj_name
+        parts = command.split()
+        if len(parts) >= 2:
+            parts.insert(2, proj_name)
+            command = " ".join(parts)
+
+    return await run_command(command, cwd=cwd, timeout=timeout, retries=retries, on_output=on_output)
 
 
 async def run_wp_cli(

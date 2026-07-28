@@ -39,6 +39,8 @@ export const Containers: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [actionLoading, setActionLoading] = useState<string | null>(null);
+    const [selectedContainers, setSelectedContainers] = useState<Set<string>>(new Set());
+    const [batchLoading, setBatchLoading] = useState(false);
 
     const fetchContainers = async () => {
         setLoading(true);
@@ -60,6 +62,10 @@ export const Containers: React.FC = () => {
 
     const handleAction = async (name: string, action: 'start' | 'pause' | 'stop' | 'restart' | 'delete') => {
         if (action === 'delete' && !confirm(`Voulez-vous vraiment supprimer le projet "${name}" ?`)) return;
+        if (action === 'start' && !confirm(`Démarrer le conteneur "${name}" ?`)) return;
+        if (action === 'pause' && !confirm(`Mettre en pause le conteneur "${name}" ?`)) return;
+        if (action === 'stop' && !confirm(`Arrêter le conteneur "${name}" ?`)) return;
+        if (action === 'restart' && !confirm(`Redémarrer le conteneur "${name}" ?`)) return;
 
         setActionLoading(`${name}-${action}`);
         try {
@@ -74,6 +80,42 @@ export const Containers: React.FC = () => {
             alert(`Erreur lors de l'action ${action} : ${err.message}`);
         } finally {
             setActionLoading(null);
+        }
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedContainers.size === filteredContainers.length) {
+            setSelectedContainers(new Set());
+        } else {
+            setSelectedContainers(new Set(filteredContainers.map(c => c.name)));
+        }
+    };
+
+    const toggleSelectContainer = (name: string) => {
+        const next = new Set(selectedContainers);
+        if (next.has(name)) {
+            next.delete(name);
+        } else {
+            next.add(name);
+        }
+        setSelectedContainers(next);
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedContainers.size === 0) return;
+        if (!confirm(`Supprimer définitivement ces ${selectedContainers.size} conteneur(s) sélectionné(s) ?`)) return;
+
+        setBatchLoading(true);
+        try {
+            for (const name of Array.from(selectedContainers)) {
+                await deleteContainer(name);
+            }
+            setSelectedContainers(new Set());
+            await fetchContainers();
+        } catch (err: any) {
+            alert(`Erreur lors de la suppression groupée : ${err.message}`);
+        } finally {
+            setBatchLoading(false);
         }
     };
 
@@ -119,6 +161,20 @@ export const Containers: React.FC = () => {
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                     </div>
+
+                    {selectedContainers.size > 0 && (
+                        <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={handleBulkDelete}
+                            disabled={batchLoading}
+                            className="gap-2"
+                        >
+                            {batchLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                            Supprimer ({selectedContainers.size})
+                        </Button>
+                    )}
+
                     <Button variant="outline" size="icon" onClick={fetchContainers} disabled={loading}>
                         <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />
                     </Button>
@@ -148,134 +204,163 @@ export const Containers: React.FC = () => {
                         <Button variant="outline" onClick={fetchContainers}>Rafraîchir</Button>
                     </div>
                 ) : (
-                    <div className="grid gap-4">
-                        {filteredContainers.map((container) => (
-                            <div key={container.name} className="group bg-card hover:bg-card/80 border border-border rounded-xl p-5 transition-all hover:shadow-lg hover:-translate-y-0.5">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-5">
-                                        <div className={cn(
-                                            "h-12 w-12 rounded-xl flex items-center justify-center shrink-0",
-                                            container.status === 'running' ? "bg-green-100 text-green-600" : "bg-muted text-muted-foreground"
-                                        )}>
-                                            <Box className="h-6 w-6" />
-                                        </div>
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between px-2 text-sm text-muted-foreground">
+                            <label className="flex items-center gap-2 cursor-pointer select-none">
+                                <input
+                                    type="checkbox"
+                                    checked={filteredContainers.length > 0 && selectedContainers.size === filteredContainers.length}
+                                    onChange={toggleSelectAll}
+                                    className="rounded border-border h-4 w-4 text-primary focus:ring-primary"
+                                />
+                                Tout sélectionner ({filteredContainers.length} conteneurs)
+                            </label>
+                        </div>
 
-                                        <div>
-                                            <div className="flex items-center gap-3">
-                                                <h3 className="font-bold text-lg">{container.name}</h3>
-                                                <Badge variant={container.status === 'running' ? 'default' : container.status === 'paused' ? 'outline' : 'secondary'} className={cn(
-                                                    "capitalize",
-                                                    container.status === 'running' && "bg-green-500 hover:bg-green-600 text-white",
-                                                    container.status === 'paused' && "border-amber-500 text-amber-600 bg-amber-50"
-                                                )}>
-                                                    {container.status}
-                                                </Badge>
-                                                {container.project_id && (
-                                                    <Badge variant="outline" className="text-[10px] bg-primary/5 text-primary border-primary/20">
-                                                        Projet BDD #{container.project_id}
-                                                    </Badge>
-                                                )}
-                                            </div>
-                                            <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
-                                                <div className="flex items-center gap-1.5">
-                                                    <Cpu className="h-3.5 w-3.5" />
-                                                    PHP {container.php_version}
-                                                </div>
-                                                <div className="flex items-center gap-1.5">
-                                                    <Database className="h-3.5 w-3.5" />
-                                                    {container.db_type} {container.db_version}
-                                                </div>
-                                                <div className="flex items-center gap-1.5">
-                                                    <HardDrive className="h-3.5 w-3.5" />
-                                                    {formatSize(container.storage_bytes)}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="flex items-center gap-2">
-                                        {container.url && (
-                                            <Button variant="ghost" size="sm" asChild className="text-primary hover:text-primary hover:bg-primary/10">
-                                                <a href={container.url} target="_blank" rel="noopener noreferrer">
-                                                    <ExternalLink className="h-4 w-4 mr-2" />
-                                                    Ouvrir le site
-                                                </a>
-                                            </Button>
+                        <div className="grid gap-4">
+                            {filteredContainers.map((container) => {
+                                const isChecked = selectedContainers.has(container.name);
+                                return (
+                                    <div
+                                        key={container.name}
+                                        className={cn(
+                                            "group bg-card hover:bg-card/80 border border-border rounded-xl p-5 transition-all hover:shadow-lg hover:-translate-y-0.5",
+                                            isChecked && "border-primary/50 bg-primary/5"
                                         )}
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-5">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={isChecked}
+                                                    onChange={() => toggleSelectContainer(container.name)}
+                                                    className="rounded border-border h-4 w-4 text-primary focus:ring-primary cursor-pointer shrink-0"
+                                                />
+                                                <div className={cn(
+                                                    "h-12 w-12 rounded-xl flex items-center justify-center shrink-0",
+                                                    container.status === 'running' ? "bg-green-100 text-green-600" : "bg-muted text-muted-foreground"
+                                                )}>
+                                                    <Box className="h-6 w-6" />
+                                                </div>
 
-                                        <div className="h-8 w-px bg-border mx-2" />
+                                                <div>
+                                                    <div className="flex items-center gap-3">
+                                                        <h3 className="font-bold text-lg">{container.name}</h3>
+                                                        <Badge variant={container.status === 'running' ? 'default' : container.status === 'paused' ? 'outline' : 'secondary'} className={cn(
+                                                            "capitalize",
+                                                            container.status === 'running' && "bg-green-500 hover:bg-green-600 text-white",
+                                                            container.status === 'paused' && "border-amber-500 text-amber-600 bg-amber-50"
+                                                        )}>
+                                                            {container.status}
+                                                        </Badge>
+                                                        {container.project_id && (
+                                                            <Badge variant="outline" className="text-[10px] bg-primary/5 text-primary border-primary/20">
+                                                                Projet BDD #{container.project_id}
+                                                            </Badge>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <Cpu className="h-3.5 w-3.5" />
+                                                            PHP {container.php_version}
+                                                        </div>
+                                                        <div className="flex items-center gap-1.5">
+                                                            <Database className="h-3.5 w-3.5" />
+                                                            {container.db_type} {container.db_version}
+                                                        </div>
+                                                        <div className="flex items-center gap-1.5">
+                                                            <HardDrive className="h-3.5 w-3.5" />
+                                                            {formatSize(container.storage_bytes)}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
 
-                                        <div className="flex items-center gap-1.5">
-                                            <Button
-                                                size="sm"
-                                                variant="outline"
-                                                onClick={() => handleAction(container.name, 'start')}
-                                                disabled={!!actionLoading || container.status === 'running'}
-                                                className="h-9 gap-2 hover:bg-green-50 hover:text-green-600 hover:border-green-200"
-                                            >
-                                                {actionLoading === `${container.name}-start` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                                                Start
-                                            </Button>
+                                            <div className="flex items-center gap-2">
+                                                {container.url && (
+                                                    <Button variant="ghost" size="sm" asChild className="text-primary hover:text-primary hover:bg-primary/10">
+                                                        <a href={container.url} target="_blank" rel="noopener noreferrer">
+                                                            <ExternalLink className="h-4 w-4 mr-2" />
+                                                            Ouvrir le site
+                                                        </a>
+                                                    </Button>
+                                                )}
 
-                                            <Button
-                                                size="sm"
-                                                variant="outline"
-                                                onClick={() => handleAction(container.name, 'pause')}
-                                                disabled={!!actionLoading || container.status !== 'running'}
-                                                className="h-9 gap-2 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200"
-                                            >
-                                                {actionLoading === `${container.name}-pause` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pause className="h-4 w-4" />}
-                                                Pause
-                                            </Button>
+                                                <div className="h-8 w-px bg-border mx-2" />
 
-                                            <Button
-                                                size="sm"
-                                                variant="outline"
-                                                onClick={() => handleAction(container.name, 'stop')}
-                                                disabled={!!actionLoading || (container.status !== 'running' && container.status !== 'paused')}
-                                                className="h-9 gap-2 hover:bg-orange-50 hover:text-orange-600 hover:border-orange-200"
-                                            >
-                                                {actionLoading === `${container.name}-stop` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
-                                                Stop
-                                            </Button>
+                                                <div className="flex items-center gap-1.5">
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        onClick={() => handleAction(container.name, 'start')}
+                                                        disabled={!!actionLoading || container.status === 'running'}
+                                                        className="h-9 gap-2 hover:bg-green-50 hover:text-green-600 hover:border-green-200"
+                                                    >
+                                                        {actionLoading === `${container.name}-start` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                                                        Start
+                                                    </Button>
 
-                                            <Button
-                                                size="sm"
-                                                variant="outline"
-                                                onClick={() => handleAction(container.name, 'restart')}
-                                                disabled={!!actionLoading}
-                                                className="h-9 gap-2 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"
-                                            >
-                                                {actionLoading === `${container.name}-restart` ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
-                                                Restart
-                                            </Button>
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        onClick={() => handleAction(container.name, 'pause')}
+                                                        disabled={!!actionLoading || container.status !== 'running'}
+                                                        className="h-9 gap-2 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200"
+                                                    >
+                                                        {actionLoading === `${container.name}-pause` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pause className="h-4 w-4" />}
+                                                        Pause
+                                                    </Button>
 
-                                            <Button
-                                                size="sm"
-                                                variant="outline"
-                                                onClick={() => handleAction(container.name, 'delete')}
-                                                disabled={!!actionLoading}
-                                                className="h-9 gap-2 text-destructive hover:bg-destructive/10"
-                                            >
-                                                {actionLoading === `${container.name}-delete` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                                                Delete
-                                            </Button>
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        onClick={() => handleAction(container.name, 'stop')}
+                                                        disabled={!!actionLoading || (container.status !== 'running' && container.status !== 'paused')}
+                                                        className="h-9 gap-2 hover:bg-orange-50 hover:text-orange-600 hover:border-orange-200"
+                                                    >
+                                                        {actionLoading === `${container.name}-stop` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
+                                                        Stop
+                                                    </Button>
+
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        onClick={() => handleAction(container.name, 'restart')}
+                                                        disabled={!!actionLoading}
+                                                        className="h-9 gap-2 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"
+                                                    >
+                                                        {actionLoading === `${container.name}-restart` ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                                                        Restart
+                                                    </Button>
+
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        onClick={() => handleAction(container.name, 'delete')}
+                                                        disabled={!!actionLoading}
+                                                        className="h-9 gap-2 text-destructive hover:bg-destructive/10"
+                                                    >
+                                                        {actionLoading === `${container.name}-delete` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                                        Delete
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-4 pt-4 border-t border-border flex items-center justify-between text-[10px] text-muted-foreground/60 uppercase tracking-widest">
+                                            <div className="flex items-center gap-4">
+                                                <span>Approot: {container.approot}</span>
+                                                <span className="h-1 w-1 rounded-full bg-border" />
+                                                <span>Router: {container.router || 'traefik'}</span>
+                                            </div>
+                                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                Voir détails <ChevronRight className="h-3 w-3" />
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-
-                                <div className="mt-4 pt-4 border-t border-border flex items-center justify-between text-[10px] text-muted-foreground/60 uppercase tracking-widest">
-                                    <div className="flex items-center gap-4">
-                                        <span>Approot: {container.approot}</span>
-                                        <span className="h-1 w-1 rounded-full bg-border" />
-                                        <span>Router: {container.router || 'traefik'}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        Voir détails <ChevronRight className="h-3 w-3" />
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
+                                );
+                            })}
+                        </div>
                     </div>
                 )}
             </main>

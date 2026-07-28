@@ -13,6 +13,7 @@ from backend.utils.command import run_command, run_ddev_command
 from backend.core.config import settings
 from backend.models.database import Project, ProjectStatus, async_session
 from backend.api.projects import _delete_project_background
+from backend.core.websocket import ws_manager
 
 router = APIRouter(tags=["system"])
 
@@ -174,3 +175,21 @@ async def delete_container(name: str, background_tasks: BackgroundTasks):
     if result.success:
         return {"status": "success", "message": f"Projet DDEV {name} supprimé"}
     raise HTTPException(status_code=500, detail=result.stderr)
+
+
+@router.post("/system/ddev-reset")
+async def reset_ddev_global():
+    """Effectue un poweroff global DDEV (arrête tous les conteneurs DDEV)."""
+    result = await run_command("ddev poweroff", timeout=60)
+    if result.success:
+        # Passer tous les projets en statut STOPPED
+        async with async_session() as session:
+            db_projects = (await session.execute(select(Project))).scalars().all()
+            for p in db_projects:
+                if p.status not in (ProjectStatus.CREATED, ProjectStatus.DELETING, ProjectStatus.ERROR):
+                    p.status = ProjectStatus.STOPPED
+            await session.commit()
+
+        await ws_manager.broadcast({"type": "queue_updated"})
+        return {"status": "success", "message": "Environnement DDEV réinitialisé avec succès (power-off global)."}
+    raise HTTPException(status_code=500, detail=f"Échec du reset DDEV : {result.stderr}")
