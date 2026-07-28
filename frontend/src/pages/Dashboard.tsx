@@ -24,6 +24,7 @@ import { ProjectList } from '@/components/project/ProjectList';
 import { LogViewer } from '@/components/dashboard/LogViewer';
 import { WorkflowProgress } from '@/components/dashboard/WorkflowProgress';
 import { QueueModal } from '@/components/dashboard/QueueModal';
+import { NotificationModal } from '@/components/dashboard/NotificationModal';
 import { ImageComparer } from '@/components/vrt/ImageComparer';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
@@ -54,6 +55,7 @@ import {
   Menu,
   MoreVertical,
   ImageOff,
+  Bell,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
@@ -75,6 +77,7 @@ export function Dashboard() {
     setDdevLoading,
     workflowLoading,
     setWorkflowLoading,
+    notifications,
   } = useAppStore();
 
   const { confirm, dialog } = useConfirmDialog();
@@ -240,6 +243,9 @@ export function Dashboard() {
 
   const [queueInfo, setQueueInfo] = useState<{ total_active: number; total_pending: number } | null>(null);
   const [showQueueModal, setShowQueueModal] = useState(false);
+  const [showNotificationModal, setShowNotificationModal] = useState(false);
+
+  const unreadCount = notifications.filter((n) => !n.read).length;
 
   const fetchQueueInfo = useCallback(async () => {
     try {
@@ -471,6 +477,22 @@ export function Dashboard() {
             <Button
               variant="outline"
               size="sm"
+              onClick={() => setShowQueueModal(true)}
+              className="h-8 text-xs px-2.5 text-amber-600 border-amber-500/30 hover:bg-amber-500/10 dark:text-amber-400"
+              title="Voir la file d'attente"
+            >
+              <Clock className="mr-1.5 h-3.5 w-3.5" />
+              <span className="hidden sm:inline">File d'attente</span>
+              {queueInfo && (queueInfo.total_active > 0 || queueInfo.total_pending > 0) && (
+                <Badge variant="secondary" className="ml-1.5 px-1.5 py-0 text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-300">
+                  {queueInfo.total_active + queueInfo.total_pending}
+                </Badge>
+              )}
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
               asChild
               className="h-8 text-xs px-2"
             >
@@ -526,6 +548,21 @@ export function Dashboard() {
                 </div>
               </div>
             )}
+
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setShowNotificationModal(true)}
+              className="h-8 w-8 relative text-muted-foreground hover:text-foreground"
+              title="Notifications"
+            >
+              <Bell className="h-4 w-4" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white shadow-xs animate-pulse">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </Button>
           </div>
         </div>
       </header>
@@ -730,21 +767,6 @@ export function Dashboard() {
 
                 {currentWorkflow?.status !== 'running' && (
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowQueueModal(true)}
-                      className="text-amber-600 border-amber-500/30 hover:bg-amber-500/10 dark:text-amber-400"
-                    >
-                      <Clock className="mr-1.5 h-4 w-4" />
-                      File d'attente
-                      {queueInfo && (queueInfo.total_active > 0 || queueInfo.total_pending > 0) && (
-                        <Badge variant="secondary" className="ml-1.5 px-1.5 py-0 text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-300">
-                          {queueInfo.total_active + queueInfo.total_pending}
-                        </Badge>
-                      )}
-                    </Button>
-
                     <Button
                       variant="outline"
                       size="sm"
@@ -966,6 +988,7 @@ export function Dashboard() {
         </main>
       </div>
       <QueueModal isOpen={showQueueModal} onClose={() => setShowQueueModal(false)} />
+      <NotificationModal isOpen={showNotificationModal} onClose={() => setShowNotificationModal(false)} />
     </div>
   );
 }

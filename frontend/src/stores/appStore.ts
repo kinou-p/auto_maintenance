@@ -32,6 +32,15 @@ function deleteProjectLogs(projectId: number): void {
   }
 }
 
+export interface AppNotification {
+  id: string;
+  title: string;
+  description?: string;
+  variant: 'default' | 'success' | 'warning' | 'destructive' | 'info';
+  timestamp: string;
+  read: boolean;
+}
+
 interface AppState {
   projects: Project[];
   currentProject: Project | null;
@@ -62,6 +71,12 @@ interface AppState {
 
   workflowLoading: boolean;
   setWorkflowLoading: (loading: boolean) => void;
+
+  notifications: AppNotification[];
+  addNotification: (notification: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => void;
+  markAllNotificationsAsRead: () => void;
+  removeNotification: (id: string) => void;
+  clearNotifications: () => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -149,4 +164,28 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   workflowLoading: false,
   setWorkflowLoading: (loading) => set({ workflowLoading: loading }),
+
+  notifications: [],
+  addNotification: (notification) =>
+    set((state) => ({
+      notifications: [
+        {
+          ...notification,
+          id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          timestamp: new Date().toISOString(),
+          read: false,
+        },
+        ...state.notifications,
+      ].slice(0, 100),
+    })),
+  markAllNotificationsAsRead: () =>
+    set((state) => ({
+      notifications: state.notifications.map((n) => ({ ...n, read: true })),
+    })),
+  removeNotification: (id) =>
+    set((state) => ({
+      notifications: state.notifications.filter((n) => n.id !== id),
+    })),
+  clearNotifications: () => set({ notifications: [] }),
 }));
+

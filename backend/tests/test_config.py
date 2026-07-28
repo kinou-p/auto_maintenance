@@ -13,6 +13,9 @@ def test_default_settings():
     assert settings.max_upload_size_mb == 2048
     assert settings.max_upload_size_bytes == 2048 * 1024 * 1024
     assert settings.ddev_php_version == "8.2"
+    assert settings.screenshot_load_timeout == 15000
+    assert settings.screenshot_networkidle_timeout == 5000
+    assert settings.screenshot_stabilize_delay == 1000
 
 
 def test_effective_ddev_projects_dir(tmp_path):

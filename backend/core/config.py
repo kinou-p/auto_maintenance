@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     screenshot_mobile_width: int = 375
     screenshot_mobile_height: int = 812
     playwright_timeout: int = 60000  # 60s pour permettre le chargement complet CSS/fonts
+    screenshot_load_timeout: int = 15000  # 15s max d'attente pour le load state
+    screenshot_networkidle_timeout: int = 5000  # 5s max d'attente pour le networkidle
+    screenshot_stabilize_delay: int = 1000  # 1000ms de pause de stabilisation avant capture
 
     # --- VRT ---
     vrt_threshold: float = 0.1

@@ -1,6 +1,8 @@
 import { useState, useCallback } from 'react';
 import { Toast, ToastClose, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from '@/components/ui/Toast';
 
+import { useAppStore } from '@/stores/appStore';
+
 type ToastVariant = 'default' | 'success' | 'info' | 'warning' | 'destructive';
 
 interface ToastItem {
@@ -20,6 +22,7 @@ export function useToast() {
     ({ title, description, variant = 'default', duration = 5000 }: Omit<ToastItem, 'id'>) => {
       const id = `toast-${++toastCount}`;
       setToasts((prev) => [...prev, { id, title, description, variant, duration }]);
+      useAppStore.getState().addNotification({ title, description, variant });
     },
     [],
   );

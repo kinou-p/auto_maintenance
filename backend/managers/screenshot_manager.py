@@ -276,23 +276,16 @@ class ScreenshotManager:
         page = await context.new_page()
 
         try:
-            # Naviguer vers la page
-            await page.goto(url, wait_until="domcontentloaded", timeout=settings.playwright_timeout)
+            # Naviguer vers la page (attendre le load state initial)
+            await page.goto(url, wait_until="load", timeout=settings.playwright_timeout)
 
-            # Attendre le chargement rapide
+            # Attendre networkidle avec le timeout configuré pour laisser le temps aux ressources async
             try:
-                await page.wait_for_load_state("load", timeout=3000)
-                await page.wait_for_load_state("networkidle", timeout=1500)
+                await page.wait_for_load_state("networkidle", timeout=settings.screenshot_networkidle_timeout)
             except Exception:
                 pass
 
-            # Attendre les fonts
-            try:
-                await page.evaluate("document.fonts.ready")
-            except Exception:
-                pass
-
-            # Scroll rapide pour lazy loading
+            # Scroll progressif pour déclencher le lazy loading et charger les images
             await self._scroll_page(page)
 
             # Revenir en haut instantanément
@@ -302,11 +295,17 @@ class ScreenshotManager:
                 }
             """)
 
-            # Masquer les éléments dynamiques
+            # Masquer les éléments dynamiques (cookies, popups, animations)
             await self._hide_dynamic_elements(page)
 
-            # Stabilisation ultra rapide (200ms)
-            await page.wait_for_timeout(200)
+            # Attendre la fin du chargement des polices web
+            try:
+                await page.evaluate("document.fonts.ready")
+            except Exception:
+                pass
+
+            # Pause de stabilisation pour assurer le rendu complet de la page
+            await page.wait_for_timeout(settings.screenshot_stabilize_delay)
 
             # Capture
             await page.screenshot(
@@ -333,7 +332,7 @@ class ScreenshotManager:
             await context.close()
 
     async def _scroll_page(self, page) -> None:
-        """Scroll rapide de la page pour déclencher le lazy loading."""
+        """Scroll progressif de la page pour déclencher le lazy loading et attendre le chargement des images."""
         await page.evaluate("""
             async () => {
                 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -349,11 +348,26 @@ class ScreenshotManager:
                 
                 for (let i = 0; i < height; i += step) {
                     window.scrollTo({top: i, behavior: 'auto'});
-                    await delay(40);
+                    await delay(60);
                 }
                 
                 window.scrollTo({top: height, behavior: 'auto'});
-                await delay(200);
+                await delay(300);
+
+                // Attendre le chargement effectif de toutes les images
+                const imagePromises = Array.from(document.images).map(img => {
+                    if (img.complete) return Promise.resolve();
+                    return new Promise(resolve => {
+                        img.addEventListener('load', resolve, { once: true });
+                        img.addEventListener('error', resolve, { once: true });
+                    });
+                });
+                
+                // Timeout de sécurité de 3s pour la résolution des images
+                await Promise.race([
+                    Promise.all(imagePromises),
+                    delay(3000)
+                ]);
             }
         """)
 
