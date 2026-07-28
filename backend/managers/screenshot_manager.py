@@ -242,12 +242,10 @@ class ScreenshotManager:
             "locale": "fr-FR",
             "timezone_id": "Europe/Paris",
             "bypass_csp": True,
-            "is_mobile": vp["is_mobile"],
-            "has_touch": vp["has_touch"],
-            "device_scale_factor": vp["device_scale_factor"],
         }
         if vp["user_agent"]:
             context_opts["user_agent"] = vp["user_agent"]
+
 
         context = await browser.new_context(**context_opts)
         page = await context.new_page()
