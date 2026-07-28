@@ -61,7 +61,7 @@ export const checkHealth = () => apiFetch<HealthCheck>('/health');
 
 // ── Projects ─────────────────────────────────────────────────────
 export const getProjects = () =>
-  apiFetch<{ projects: Project[]; total: number }>('/projects');
+  apiFetch<{ projects: Project[]; total: number }>('/projects/');
 
 export const getProject = (id: number) =>
   apiFetch<Project>(`/projects/${id}`);
