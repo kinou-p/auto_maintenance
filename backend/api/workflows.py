@@ -20,6 +20,7 @@ from backend.managers.workflow_orchestrator import (
 from backend.managers.queue_manager import queue_manager
 from backend.models.database import (
     Project,
+    ProjectStatus,
     Workflow,
     WorkflowStatus,
     async_session,
@@ -66,6 +67,9 @@ async def start_workflow(request: WorkflowStart) -> WorkflowResponse:
             options["selected_updates"] = normalized_selected_updates
         if request.import_only:
             options["import_only"] = True
+
+        # Passer le projet en statut "pending"
+        project.status = ProjectStatus.PENDING
 
         # Créer le workflow en DB
         workflow = Workflow(
@@ -141,6 +145,8 @@ async def start_workflows_batch(payload: BatchWorkflowRequest) -> list[WorkflowR
             options = {}
             if payload.import_only:
                 options["import_only"] = True
+
+            project.status = ProjectStatus.PENDING
 
             workflow = Workflow(
                 project_id=pid,
