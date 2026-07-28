@@ -8,6 +8,7 @@ services:
     ports:
       - "8800:8000"
     volumes:
+      - ./backend:/app/backend
       - ./data:/app/data
       - ./.env:/app/.env
       - /var/run/docker.sock:/var/run/docker.sock
