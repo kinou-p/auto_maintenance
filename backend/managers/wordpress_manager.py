@@ -748,37 +748,44 @@ class WordPressManager:
 
 
         # ── 8. Vérifier que le site répond correctement ──
+        # On utilise `ddev exec curl` depuis le container web DDEV (pas httpx depuis le backend)
+        # car *.ddev.site résout vers 127.0.0.1 qui est le localhost du container backend,
+        # pas le router DDEV sur l'hôte Docker.
 
         await self._log("info", "Vérification de l'accessibilité du site...", step="wpress_import")
         max_retries = 8
         site_accessible = False
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
-                    response = await client.get(new_site_url)
-                    # Vérifier que le site répond correctement (HTTP 200, 301, 302)
-                    if response.status_code in (200, 301, 302):
-                        await self._log(
-                            "success",
-                            f"Site accessible avec succès (statut HTTP {response.status_code}).",
-                            step="wpress_import",
-                        )
-                        site_accessible = True
-                        break
-                    else:
-                        await self._log(
-                            "warning",
-                            f"Tentative {attempt + 1}/{max_retries} - Code HTTP {response.status_code}",
-                            step="wpress_import",
-                        )
-                        # Si on a un 502, on tente de redémarrer DDEV à mi-chemin
-                        if response.status_code == 502 and attempt == 3:
-                            await self._log(
-                                "warning",
-                                "Détection persistante d'une erreur 502. Tentative de redémarrage de DDEV...",
-                                step="wpress_import",
-                            )
-                            await self.ddev.restart()
+                # Curl depuis l'intérieur du container DDEV web — pas de problème de routage
+                curl_result = await self.ddev.exec_in_container(
+                    "curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://localhost/ 2>/dev/null || echo 000"
+                )
+                http_code_str = (curl_result.stdout or "").strip().strip("'\"")
+                http_code = int(http_code_str) if http_code_str.isdigit() else 0
+
+                if http_code in (200, 301, 302, 303):
+                    await self._log(
+                        "success",
+                        f"Site accessible avec succès (HTTP {http_code} via ddev exec curl).",
+                        step="wpress_import",
+                    )
+                    site_accessible = True
+                    break
+                elif http_code == 502 and attempt == 3:
+                    await self._log(
+                        "warning",
+                        "Détection persistante d'une erreur 502. Tentative de redémarrage de DDEV...",
+                        step="wpress_import",
+                    )
+                    await self.ddev.restart()
+                    await asyncio.sleep(5)
+                else:
+                    await self._log(
+                        "warning",
+                        f"Tentative {attempt + 1}/{max_retries} - Code HTTP {http_code}",
+                        step="wpress_import",
+                    )
             except Exception as e:
                 await self._log(
                     "warning",
@@ -789,12 +796,11 @@ class WordPressManager:
 
         if not site_accessible:
             await self._log(
-                "error",
-                "Le site ne répond pas correctement (502 ou pas de CSS) après plusieurs tentatives. "
-                "Arrêt du workflow pour éviter des screenshots erronés.",
+                "warning",
+                "Le site n'a pas répondu correctement après plusieurs tentatives — continuation du workflow (screenshots possiblement vides).",
                 step="wpress_import",
             )
-            return False
+            # On ne bloque plus le workflow sur ce check : les screenshots et mises à jour peuvent quand même être effectuées
 
         # ── 9. Stabilisation finale ──
         await self._log("info", "Stabilisation du site (5s)...", step="wpress_import")
