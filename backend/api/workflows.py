@@ -96,15 +96,22 @@ async def start_workflow(request: WorkflowStart) -> WorkflowResponse:
 
 
 
+from pydantic import BaseModel
+
+class BatchWorkflowRequest(BaseModel):
+    project_ids: list[int]
+    import_only: Optional[bool] = False
+
+
 @router.post("/batch", response_model=list[WorkflowResponse], status_code=201)
-async def start_workflows_batch(project_ids: list[int]) -> list[WorkflowResponse]:
+async def start_workflows_batch(payload: BatchWorkflowRequest) -> list[WorkflowResponse]:
     """
     Démarre des workflows pour plusieurs projets (batch).
     """
     created_workflows = []
     
     async with async_session() as session:
-        for pid in project_ids:
+        for pid in payload.project_ids:
             # Vérifier existence projet et absence de workflow en cours
             project = await session.get(Project, pid)
             if not project:
@@ -119,10 +126,15 @@ async def start_workflows_batch(project_ids: list[int]) -> list[WorkflowResponse
             if running.scalar_one_or_none():
                 continue
             
+            options = {}
+            if payload.import_only:
+                options["import_only"] = True
+
             # Créer le workflow
             workflow = Workflow(
                 project_id=pid,
                 status=WorkflowStatus.PENDING,
+                options=options,
             )
             session.add(workflow)
             await session.flush() # Pour avoir l'ID
