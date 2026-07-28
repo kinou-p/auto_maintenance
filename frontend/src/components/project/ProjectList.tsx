@@ -24,6 +24,7 @@ const STATUS_CONFIG: Record<ProjectStatus, { label: string; variant: 'default' |
   wordpress_installed: { label: 'WP Installé', variant: 'default' },
   importing: { label: 'Import en cours', variant: 'default' },
   ready: { label: 'Prêt', variant: 'success' },
+  pending: { label: 'En attente', variant: 'warning' },
   maintenance_in_progress: { label: 'Maintenance', variant: 'warning' },
   maintenance_done: { label: 'Terminé', variant: 'success' },
   error: { label: 'Erreur', variant: 'destructive' },
@@ -373,7 +374,7 @@ export function ProjectList({ onToast }: ProjectListProps) {
           const isSelected = currentProject?.id === project.id;
           const isDeleting = project.status === 'deleting';
           const isChecked = selectedProjects.has(project.id);
-          const isRunning = ['initializing', 'wordpress_installed', 'importing', 'maintenance_in_progress'].includes(project.status);
+          const isRunning = ['initializing', 'wordpress_installed', 'importing', 'pending', 'maintenance_in_progress'].includes(project.status);
 
           return (
             <div

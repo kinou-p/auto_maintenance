@@ -59,6 +59,7 @@ class ProjectStatus(str, enum.Enum):
     WORDPRESS_INSTALLED = "wordpress_installed"
     IMPORTING = "importing"
     READY = "ready"
+    PENDING = "pending"
     MAINTENANCE_IN_PROGRESS = "maintenance_in_progress"
     MAINTENANCE_DONE = "maintenance_done"
     ERROR = "error"

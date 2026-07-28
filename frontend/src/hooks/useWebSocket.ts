@@ -91,6 +91,11 @@ export function useWebSocket(projectId?: number) {
               if (project && project.status !== 'maintenance_in_progress') {
                 state.updateProject({ ...project, status: 'maintenance_in_progress' });
               }
+            } else if (data.status === 'pending') {
+              const project = state.projects.find(p => p.id === data.project_id);
+              if (project && project.status !== 'pending') {
+                state.updateProject({ ...project, status: 'pending' });
+              }
             }
           } else if (data.type === 'project_deletion') {
             if (data.status === 'completed') {

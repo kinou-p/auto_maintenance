@@ -19,6 +19,7 @@ export type ProjectStatus =
   | 'wordpress_installed'
   | 'importing'
   | 'ready'
+  | 'pending'
   | 'maintenance_in_progress'
   | 'maintenance_done'
   | 'error'

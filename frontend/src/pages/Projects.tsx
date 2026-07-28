@@ -53,6 +53,7 @@ const STATUS_CONFIG: Record<
   wordpress_installed: { label: 'WP Installé', variant: 'default' },
   importing: { label: 'Import en cours', variant: 'default' },
   ready: { label: 'Prêt', variant: 'success' },
+  pending: { label: 'En attente', variant: 'warning' },
   maintenance_in_progress: { label: 'Maintenance', variant: 'warning' },
   maintenance_done: { label: 'Terminé', variant: 'success' },
   error: { label: 'Erreur', variant: 'destructive' },
@@ -426,6 +427,7 @@ export const Projects: React.FC = () => {
               >
                 <option value="all">Tous les statuts ({projects.length})</option>
                 <option value="ready">Prêt</option>
+                <option value="pending">En attente</option>
                 <option value="maintenance_in_progress">Maintenance en cours</option>
                 <option value="maintenance_done">Maintenance terminée</option>
                 <option value="error">Erreur</option>
