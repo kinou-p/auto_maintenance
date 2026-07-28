@@ -58,6 +58,15 @@ export function ProjectList() {
 
   useEffect(() => {
     fetchProjects();
+
+    const handleQueueUpdated = () => {
+      fetchProjects();
+    };
+
+    window.addEventListener('app:queue_updated', handleQueueUpdated);
+    return () => {
+      window.removeEventListener('app:queue_updated', handleQueueUpdated);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
