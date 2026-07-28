@@ -71,9 +71,15 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set, get) => ({
   // Projects
-  projects: [],
-  currentProject: null,
-  setProjects: (projects) => set({ projects }),
+  setProjects: (projects) => {
+    const current = get().currentProject;
+    if (current) {
+      const updatedCurrent = projects.find((p) => p.id === current.id);
+      set({ projects, currentProject: updatedCurrent || current });
+    } else {
+      set({ projects });
+    }
+  },
   setCurrentProject: (project) => {
     // Charger les logs sauvegardés du projet sélectionné
     const logs = project ? getStoredLogs(project.id) : [];
