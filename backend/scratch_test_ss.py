@@ -22,12 +22,12 @@ async def test():
         page = await c.new_page()
 
         try:
-            target = "http://larochelleportscenter-com-20260726-221202-950.ddev.site:8088/acteurs-du-territoire/"
-            print("Navigating to ddev domain with Chromium --host-resolver-rules:", target)
+            target = "http://larochelleportscenter-com-20260726-221202-950.ddev.site:8088/"
+            print("Navigating to Homepage:", target)
             res = await page.goto(target, timeout=10000)
-            print("PAGE GOTO RESPONSE:", res.status if res else "None")
+            print("HOMEPAGE RESPONSE:", res.status if res else "None", "FINAL URL:", res.url if res else "")
         except Exception as e:
-            print("PAGE GOTO ERROR:", type(e).__name__, e)
+            print("HOMEPAGE ERROR:", type(e).__name__, e)
         await b.close()
 
 if __name__ == "__main__":
