@@ -664,10 +664,22 @@ class WordPressManager:
                 "⚠️ Aucun thème actif détecté en DB après l'importation. Activation d'un thème valide...",
                 step="wpress_import",
             )
+
+            # Trouver les thèmes disponibles dans le système de fichiers
+            themes_dir = self.project_dir / "wp-content" / "themes"
+            fs_themes = []
+            if themes_dir.exists():
+                fs_themes = [d.name for d in themes_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
+
+            # Préférer les thèmes custom (non twentytwenty*)
+            custom_fs = [t for t in fs_themes if not t.startswith("twenty")]
+            candidate_fs = custom_fs if custom_fs else fs_themes
+
+            # Essai 1 : via WP-CLI
+            wp_activated = False
             all_themes_res = await run_wp_cli("theme list --format=json", str(self.project_dir))
             try:
                 all_themes = json.loads(all_themes_res.stdout)
-                # Préférer le thème qui n'est pas twentytwenty* si possible
                 custom_themes = [t for t in all_themes if not t.get("name", "").startswith("twenty")]
                 candidate_themes = custom_themes if custom_themes else all_themes
                 if candidate_themes:
@@ -675,19 +687,36 @@ class WordPressManager:
                     if fallback_theme:
                         activate_res = await run_wp_cli(f"theme activate {fallback_theme}", str(self.project_dir))
                         if activate_res.success:
-                            await self._log(
-                                "success",
-                                f"Thème '{fallback_theme}' activé avec succès.",
-                                step="wpress_import",
-                            )
+                            await self._log("success", f"Thème '{fallback_theme}' activé via WP-CLI.", step="wpress_import")
+                            wp_activated = True
                         else:
-                            await self._log(
-                                "warning",
-                                f"Échec activation thème '{fallback_theme}' : {activate_res.stderr[:200]}",
-                                step="wpress_import",
-                            )
+                            await self._log("warning", f"WP-CLI theme activate échoué : {activate_res.stderr[:200]}", step="wpress_import")
             except Exception as e:
-                await self._log("warning", f"Impossible d'activer un thème de secours : {e}", step="wpress_import")
+                await self._log("warning", f"WP-CLI theme list échoué : {e}", step="wpress_import")
+
+            # Essai 2 : fallback SQL direct si WP-CLI a échoué
+            if not wp_activated and candidate_fs:
+                fallback_theme = candidate_fs[0]
+                await self._log("info", f"Fallback SQL : activation du thème '{fallback_theme}' directement en DB...", step="wpress_import")
+                try:
+                    # Lire le préfixe depuis wp-config.php
+                    table_prefix = "SERVMASK_PREFIX_"
+                    wp_config = self.project_dir / "wp-config.php"
+                    if wp_config.exists():
+                        for line in wp_config.read_text(encoding="utf-8", errors="ignore").splitlines():
+                            if "table_prefix" in line and "=" in line:
+                                m = re.search(r"""table_prefix\s*=\s*['"]([^'"]+)['"]""", line)
+                                if m:
+                                    table_prefix = m.group(1)
+                                    break
+                    sql_stylesheet = f"UPDATE `{table_prefix}options` SET option_value='{fallback_theme}' WHERE option_name='stylesheet';"
+                    sql_template = f"UPDATE `{table_prefix}options` SET option_value='{fallback_theme}' WHERE option_name='template';"
+                    for sql in [sql_stylesheet, sql_template]:
+                        res = await self.ddev.exec_command(f"mysql -uroot -proot db -e \"{sql}\"")
+                        await self._log("info", f"SQL thème [{table_prefix}]: rc={res.returncode}", step="wpress_import")
+                    await self._log("success", f"Thème '{fallback_theme}' forcé en DB via SQL.", step="wpress_import")
+                except Exception as e:
+                    await self._log("warning", f"Fallback SQL thème échoué : {e}", step="wpress_import")
 
 
         # ── 8. Vérifier que le site répond correctement ──
