@@ -38,7 +38,7 @@ const STATUS_CONFIG: Record<ProjectStatus, { label: string; variant: 'default' |
 export function ProjectList() {
   const { projects, setProjects, currentProject, setCurrentProject } = useAppStore();
   const [loading, setLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState<{ projectId: number; action: 'delete' } | null>(null);
+  const [actionLoading, setActionLoading] = useState<{ projectId: number; action: 'delete' | 'reset' } | null>(null);
   const [selectedProjects, setSelectedProjects] = useState<Set<number>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
