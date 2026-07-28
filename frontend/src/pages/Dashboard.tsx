@@ -181,8 +181,9 @@ export function Dashboard() {
 
     fetchStatus();
 
-    // Polling du statut (toutes les 10s)
-    const interval = setInterval(fetchStatus, 10000);
+    // Ecouter l'événement WebSocket pour ré-évaluer le statut DDEV/workflow
+    const handleStatusUpdate = () => fetchStatus();
+    window.addEventListener('app:queue_updated', handleStatusUpdate);
 
     // Vérifier s'il y a un workflow actif pour ce projet
     getActiveWorkflow(currentProject.id)
@@ -200,7 +201,7 @@ export function Dashboard() {
         setCurrentWorkflow(null);
       });
 
-    return () => clearInterval(interval);
+    return () => window.removeEventListener('app:queue_updated', handleStatusUpdate);
   }, [currentProject, setCurrentWorkflow]);
 
   const [queueInfo, setQueueInfo] = useState<{ total_active: number; total_pending: number } | null>(null);
@@ -218,8 +219,9 @@ export function Dashboard() {
 
   useEffect(() => {
     fetchQueueInfo();
-    const interval = setInterval(fetchQueueInfo, 4000);
-    return () => clearInterval(interval);
+    const handleQueueUpdate = () => fetchQueueInfo();
+    window.addEventListener('app:queue_updated', handleQueueUpdate);
+    return () => window.removeEventListener('app:queue_updated', handleQueueUpdate);
   }, [fetchQueueInfo]);
 
   const handleStartWorkflow = async () => {

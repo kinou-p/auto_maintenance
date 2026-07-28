@@ -53,6 +53,10 @@ export function useWebSocket(projectId?: number) {
           const data = JSON.parse(event.data);
           const state = useAppStore.getState();
 
+          if (data.type === 'queue_updated' || data.type === 'workflow_status') {
+            window.dispatchEvent(new CustomEvent('app:queue_updated'));
+          }
+
           if (data.type === 'progress') {
             state.setProgress(data.progress, data.step);
           } else if (data.type === 'step_completed') {

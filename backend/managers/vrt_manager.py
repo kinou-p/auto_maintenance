@@ -98,9 +98,8 @@ class VRTManager:
 
         results: list[dict] = []
 
-        for i, filename in enumerate(sorted(common_files)):
+        async def compare_single(i: int, filename: str) -> dict:
             await self._log("info", f"Comparaison [{i+1}/{len(common_files)}] : {filename}")
-
             if self.logger:
                 progress = ((i + 1) / len(common_files)) * 100
                 await self.logger.progress("vrt_compare", progress, f"Comparaison : {filename}")
@@ -111,19 +110,25 @@ class VRTManager:
                 str(diff_dir / f"diff_{filename}"),
             )
 
-            # Extraire page_name et device du nom de fichier
             parts = filename.replace(".png", "").rsplit("_", 1)
             page_name = parts[0] if len(parts) > 1 else filename
             device = parts[1] if len(parts) > 1 else "unknown"
 
+            rel_before = f"/static/data/screenshots/{self.project_name}/before/{filename}"
+            rel_after = f"/static/data/screenshots/{self.project_name}/after/{filename}"
+            rel_diff = f"/static/data/screenshots/{self.project_name}/diff/diff_{filename}"
+
             result.update({
                 "page_name": page_name,
                 "device": device,
-                "before_path": str(before_files[filename]),
-                "after_path": str(after_files[filename]),
+                "before_path": rel_before,
+                "after_path": rel_after,
+                "diff_image": rel_diff,
             })
+            return result
 
-            results.append(result)
+        tasks = [compare_single(i, fn) for i, fn in enumerate(sorted(common_files))]
+        results = await asyncio.gather(*tasks)
 
         # Calcul des totaux
         total_passed = sum(1 for r in results if r.get("passed", False))
@@ -160,27 +165,13 @@ class VRTManager:
         diff_output_path: str,
     ) -> dict:
         """
-        Compare deux images et génère une image de diff.
-
-        Args:
-            before_path: Chemin de l'image avant.
-            after_path: Chemin de l'image après.
-            diff_output_path: Chemin de sortie pour l'image de diff.
-
-        Returns:
-            Dict avec les métriques de comparaison.
+        Compare deux images et génère une image de diff (exécuté hors du thread principal).
         """
-        try:
+        def _process():
             before_img = Image.open(before_path).convert("RGB")
             after_img = Image.open(after_path).convert("RGB")
 
-            # Redimensionner si les tailles diffèrent
             if before_img.size != after_img.size:
-                await self._log(
-                    "warning",
-                    f"Tailles différentes : {before_img.size} vs {after_img.size}. Redimensionnement.",
-                )
-                # Utiliser la plus grande taille
                 max_w = max(before_img.width, after_img.width)
                 max_h = max(before_img.height, after_img.height)
 
@@ -193,14 +184,10 @@ class VRTManager:
                 before_img = before_resized
                 after_img = after_resized
 
-            # Conversion en arrays numpy
             before_arr = np.array(before_img, dtype=np.float64)
             after_arr = np.array(after_img, dtype=np.float64)
 
-            # ── Pixel diff ────────────────────────────────────────
             pixel_diff = np.abs(before_arr - after_arr)
-
-            # Appliquer la tolérance anti-aliasing
             tolerance = self.aa_tolerance
             diff_mask = np.any(pixel_diff > tolerance, axis=2)
 
@@ -208,14 +195,10 @@ class VRTManager:
             diff_pixels = int(np.sum(diff_mask))
             diff_percentage = (diff_pixels / total_pixels) * 100
 
-            # ── SSIM ─────────────────────────────────────────────
             ssim_score = self._compute_ssim(before_arr, after_arr)
-
-            # ── Image de diff ────────────────────────────────────
             diff_image = self._generate_diff_image(before_img, after_img, diff_mask)
             diff_image.save(diff_output_path, "PNG")
 
-            # ── Verdict ──────────────────────────────────────────
             passed = diff_percentage <= self.threshold
 
             return {
@@ -228,6 +211,9 @@ class VRTManager:
                 "verdict": self._get_verdict(diff_percentage),
             }
 
+        try:
+            import asyncio
+            return await asyncio.to_thread(_process)
         except Exception as e:
             await self._log("error", f"Erreur de comparaison : {e}")
             return {

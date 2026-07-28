@@ -30,7 +30,7 @@ from backend.core.config import settings
 # ── Engine & Session ──────────────────────────────────────────────
 engine = create_async_engine(
     settings.database_url,
-    echo=settings.app_debug,
+    echo=settings.sql_echo,
     connect_args={"check_same_thread": False, "timeout": 30.0},
 )
 async_session = async_sessionmaker(engine, expire_on_commit=False)

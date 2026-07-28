@@ -13,6 +13,7 @@ Optimisations :
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -81,6 +82,11 @@ class ScreenshotManager:
     async def _ensure_browser(self):
         """Lance Playwright et le navigateur s'ils ne sont pas déjà actifs."""
         if self._browser is None:
+            if sys.platform == "win32":
+                try:
+                    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+                except Exception:
+                    pass
             from playwright.async_api import async_playwright
 
             self._playwright = await async_playwright().start()
@@ -111,15 +117,31 @@ class ScreenshotManager:
     ) -> list[dict]:
         """
         Capture des screenshots pour une liste de pages.
-        Traite jusqu'à 3 pages en parallèle, desktop+mobile en parallèle par page.
-
-        Args:
-            pages: Liste de dict avec 'url', 'name', 'type'.
-            phase: "before" ou "after".
-
-        Returns:
-            Liste de dict avec les chemins des screenshots capturés.
+        Redirige automatiquement vers un thread dédié sous Windows si la boucle d'évènements
+        courante ne supporte pas les sous-processus (SelectorEventLoop de Uvicorn/FastAPI).
         """
+        if sys.platform == "win32":
+            loop = asyncio.get_running_loop()
+            if not isinstance(loop, getattr(asyncio, "ProactorEventLoop", type(None))):
+                def _run_in_proactor_thread():
+                    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        manager = ScreenshotManager(self.project_name, self.logger)
+                        return new_loop.run_until_complete(manager._do_capture_screenshots(pages, phase))
+                    finally:
+                        new_loop.close()
+
+                return await asyncio.to_thread(_run_in_proactor_thread)
+
+        return await self._do_capture_screenshots(pages, phase)
+
+    async def _do_capture_screenshots(
+        self,
+        pages: list[dict],
+        phase: str = "before",
+    ) -> list[dict]:
         step = f"screenshots_{phase}"
         await self._log("info", f"Capture des screenshots ({phase})...", step=step)
 
@@ -174,6 +196,8 @@ class ScreenshotManager:
             tb = traceback.format_exc()
             await self._log("error", f"Erreur lors de la capture : {type(e).__name__}: {e}\n{tb[-500:]}", step=step)
             return []
+        finally:
+            await self.cleanup()
 
         await self._log(
             "success",
@@ -254,10 +278,10 @@ class ScreenshotManager:
             # Naviguer vers la page
             await page.goto(url, wait_until="domcontentloaded", timeout=settings.playwright_timeout)
 
-            # Attendre le chargement complet avec fallback doux
+            # Attendre le chargement rapide
             try:
-                await page.wait_for_load_state("load", timeout=10000)
-                await page.wait_for_load_state("networkidle", timeout=5000)
+                await page.wait_for_load_state("load", timeout=3000)
+                await page.wait_for_load_state("networkidle", timeout=1500)
             except Exception:
                 pass
 
@@ -267,29 +291,21 @@ class ScreenshotManager:
             except Exception:
                 pass
 
-            # Attendre le rendu CSS
-            await page.wait_for_timeout(1000)
-
-            # Scroll pour lazy loading
+            # Scroll rapide pour lazy loading
             await self._scroll_page(page)
 
-            # Attendre les images lazy-loaded
-            await page.wait_for_timeout(2000)
-
-            # Revenir en haut
+            # Revenir en haut instantanément
             await page.evaluate("""
-                async () => {
-                    window.scrollTo({top: 0, behavior: 'smooth'});
-                    await new Promise(r => setTimeout(r, 500));
+                () => {
+                    window.scrollTo({top: 0, behavior: 'instant'});
                 }
             """)
-            await page.wait_for_timeout(1000)
 
             # Masquer les éléments dynamiques
             await self._hide_dynamic_elements(page)
 
-            # Stabilisation
-            await page.wait_for_timeout(500)
+            # Stabilisation ultra rapide (200ms)
+            await page.wait_for_timeout(200)
 
             # Capture
             await page.screenshot(
@@ -316,12 +332,10 @@ class ScreenshotManager:
             await context.close()
 
     async def _scroll_page(self, page) -> None:
-        """Scroll la page de haut en bas pour déclencher le lazy loading et charger les animations."""
+        """Scroll rapide de la page pour déclencher le lazy loading."""
         await page.evaluate("""
             async () => {
                 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-                
-                // Calculer la hauteur totale de la page
                 const getScrollHeight = () => Math.max(
                     document.body.scrollHeight,
                     document.documentElement.scrollHeight,
@@ -330,23 +344,15 @@ class ScreenshotManager:
                 );
                 
                 let height = getScrollHeight();
-                const step = Math.max(Math.floor(height / 15), 300);
+                const step = Math.max(Math.floor(height / 10), 400);
                 
-                // Scroll progressif avec plus de pauses
                 for (let i = 0; i < height; i += step) {
-                    window.scrollTo({top: i, behavior: 'smooth'});
-                    await delay(200);
-                    
-                    // Recalculer la hauteur (certains éléments peuvent charger du contenu)
-                    const newHeight = getScrollHeight();
-                    if (newHeight > height) {
-                        height = newHeight;
-                    }
+                    window.scrollTo({top: i, behavior: 'auto'});
+                    await delay(40);
                 }
                 
-                // Aller complètement en bas
-                window.scrollTo({top: height, behavior: 'smooth'});
-                await delay(1000);
+                window.scrollTo({top: height, behavior: 'auto'});
+                await delay(200);
             }
         """)
 

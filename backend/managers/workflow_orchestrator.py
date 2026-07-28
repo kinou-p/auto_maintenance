@@ -543,8 +543,13 @@ class WorkflowOrchestrator:
         self._available_updates = updates
 
     async def _step_updates_apply(self) -> None:
-        """Étape 8 : Application des mises à jour."""
+        """Étape 8 : Application des mises à jour avec Snapshot MariaDB instantané."""
         assert self._wp is not None
+        assert self._ddev is not None
+
+        # 1. Créer un snapshot MariaDB pré-mises à jour en ~1s
+        snapshot_name = f"pre_updates_wf_{self.workflow_id}"
+        await self._ddev.create_snapshot(snapshot_name)
 
         # Si des mises à jour ont été sélectionnées
         update_core = self.selected_updates.get("update_core", True)
@@ -562,14 +567,30 @@ class WorkflowOrchestrator:
             step="updates_apply",
         )
 
-        results = await self._wp.apply_updates(
-            update_core=update_core,
-            plugin_names=plugin_names or [],
-            theme_names=theme_names or [],
-        )
+        try:
+            results = await self._wp.apply_updates(
+                update_core=update_core,
+                plugin_names=plugin_names or [],
+                theme_names=theme_names or [],
+            )
+        except Exception as e:
+            await self.logger.error(
+                f"⚠️ Échec critique des mises à jour : {e}. Restauration instantanée du snapshot MariaDB...",
+                step="updates_apply",
+            )
+            await self._ddev.restore_snapshot(snapshot_name)
+            raise
 
         total_success = sum(1 for r in results if r.success)
         total_failed = sum(1 for r in results if not r.success)
+
+        # Si toutes les mises à jour ont échoué, rollback automatique
+        if results and total_success == 0:
+            await self.logger.warning(
+                f"⚠️ 100% des mises à jour ont échoué. Restauration automatique du snapshot MariaDB...",
+                step="updates_apply",
+            )
+            await self._ddev.restore_snapshot(snapshot_name)
 
         await self.logger.info(
             f"✅ Application terminée : {total_success}/{len(results)} mise(s) à jour réussie(s) ({total_failed} échec(s)).",

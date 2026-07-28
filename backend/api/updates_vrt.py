@@ -88,14 +88,27 @@ async def get_vrt_report(project_id: int) -> VRTReportResponse:
         if not reports:
             raise HTTPException(404, "Aucun rapport VRT trouvé pour ce projet.")
 
+        import re
+
+        def normalize_img_path(path: str | None) -> str | None:
+            if not path:
+                return None
+            norm = path.replace("\\", "/")
+            match = re.search(r"data/screenshots/(.+)", norm, re.IGNORECASE)
+            if match:
+                return f"/static/data/screenshots/{match.group(1)}"
+            if norm.startswith("/static/") or norm.startswith("http://") or norm.startswith("https://"):
+                return norm
+            return f"/static/data/screenshots/{norm}"
+
         items = [
             VRTReportItem(
                 page_name=r.page_name,
                 page_url=r.page_url,
                 device=r.device,
-                before_screenshot=r.before_screenshot,
-                after_screenshot=r.after_screenshot,
-                diff_image=r.diff_image,
+                before_screenshot=normalize_img_path(r.before_screenshot),
+                after_screenshot=normalize_img_path(r.after_screenshot),
+                diff_image=normalize_img_path(r.diff_image),
                 diff_percentage=r.diff_percentage,
                 ssim_score=r.ssim_score,
                 passed=bool(r.passed),

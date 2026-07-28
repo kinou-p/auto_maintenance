@@ -70,13 +70,18 @@ export function ImageComparer({
     [isDragging, handleMove],
   );
 
-  const getScreenshotUrl = (path: string) => {
-    // Convertir le chemin absolu en URL relative
-    const match = path.match(/data\/screenshots\/(.+)/);
+  const getScreenshotUrl = (path: string | undefined | null) => {
+    if (!path) return '';
+    // Normaliser les antislashs Windows (\) en slashs (/)
+    const normalized = path.replace(/\\/g, '/');
+    const match = normalized.match(/data\/screenshots\/(.+)/i);
     if (match) {
       return `/static/data/screenshots/${match[1]}`;
     }
-    return path;
+    if (normalized.startsWith('/static/') || normalized.startsWith('http://') || normalized.startsWith('https://')) {
+      return normalized;
+    }
+    return `/static/data/screenshots/${normalized}`;
   };
 
   return (

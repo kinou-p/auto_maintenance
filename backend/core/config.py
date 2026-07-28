@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     app_name: str = "auto_maintenance"
     app_env: Literal["development", "production", "testing"] = "development"
     app_debug: bool = True
+    sql_echo: bool = False
     app_port: int = 8000
     app_host: str = "0.0.0.0"
 
@@ -49,6 +50,10 @@ class Settings(BaseSettings):
     ddev_php_version: str = "8.2"
     ddev_webserver_type: str = "nginx-fpm"
     ddev_mariadb_version: str = "10.6"
+
+    # --- Workflows & Concurrence ---
+    max_concurrent_workflows: int = 2
+    updates_cache_ttl_minutes: int = 15
 
     # --- WordPress ---
     wp_admin_user: str = "admin_temp"

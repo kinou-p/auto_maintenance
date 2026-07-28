@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: auto_maintenance_backend
+    restart: always
+    ports:
+      - "8800:8000"
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/ddev-projects:/root/ddev-projects
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: auto_maintenance_frontend
+    restart: always
+    ports:
+      - "5180:80"
+    depends_on:
+      - backend

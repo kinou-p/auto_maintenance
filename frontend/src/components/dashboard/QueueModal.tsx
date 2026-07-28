@@ -36,8 +36,9 @@ export function QueueModal({ isOpen, onClose }: QueueModalProps) {
   useEffect(() => {
     if (isOpen) {
       fetchQueue();
-      const interval = setInterval(fetchQueue, 3000);
-      return () => clearInterval(interval);
+      const handleUpdate = () => fetchQueue();
+      window.addEventListener('app:queue_updated', handleUpdate);
+      return () => window.removeEventListener('app:queue_updated', handleUpdate);
     }
   }, [isOpen, fetchQueue]);
 

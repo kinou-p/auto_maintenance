@@ -23,6 +23,9 @@ from backend.managers.ddev_manager import DDEVManager
 from backend.models.schemas import UpdateItem, UpdateResult
 from backend.utils.command import CommandResult, run_command, run_wp_cli
 
+# Cache global des mises à jour (project_name -> (timestamp, result_dict))
+_updates_cache: dict[str, tuple[float, dict]] = {}
+
 
 class WordPressManager:
     """Gère toutes les opérations WordPress via WP-CLI et DDEV."""
@@ -348,6 +351,12 @@ class WordPressManager:
         Fallback : simule l'import via l'interface web avec Playwright.
         """
         try:
+            import sys
+            if sys.platform == "win32":
+                try:
+                    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+                except Exception:
+                    pass
             from playwright.async_api import async_playwright
 
             site_url = await self.ddev.get_url()
@@ -630,14 +639,25 @@ class WordPressManager:
         if act_result.success:
             await self._log("info", "Extensions du site activées avec succès.", step="wpress_import")
         else:
-            await self._log("warning", f"Activation globale des extensions partielle, tentative plugin par plugin : {act_result.stderr[:200]}", step="wpress_import")
+            await self._log("warning", f"Activation globale partielle (certaines extensions incompatibles PHP 8+), activation plugin par plugin...", step="wpress_import")
             # Tenter d'activer chaque plugin individuellement
-            plugins_res = await run_wp_cli("plugin list --field=name", str(self.project_dir))
+            plugins_res = await run_wp_cli("plugin list --field=name --skip-plugins --skip-themes", str(self.project_dir))
             if plugins_res.success:
-                p_names = [p.strip() for p in plugins_res.stdout.splitlines() if p.strip()]
+                import re
+                slug_regex = re.compile(r"^[a-zA-Z0-9_\-]+$")
+                p_names = [p.strip() for p in plugins_res.stdout.splitlines() if p.strip() and slug_regex.match(p.strip())]
+                activated_count = 0
+                failed_count = 0
                 for p_name in p_names:
-                    await run_wp_cli(f"plugin activate {p_name}", str(self.project_dir))
-            await self._log("info", "Activation individuelle des extensions terminée.", step="wpress_import")
+                    res = await run_wp_cli(f"plugin activate {p_name}", str(self.project_dir), timeout=15)
+                    if res.success:
+                        activated_count += 1
+                    else:
+                        failed_count += 1
+                        # Désactiver pour éviter de faire planter les appels WP-CLI ultérieurs
+                        await run_wp_cli(f"plugin deactivate {p_name}", str(self.project_dir))
+                        await self._log("warning", f"⚠️ Extension '{p_name}' désactivée (incompatible PHP 8+ / Fatal Error).", step="wpress_import")
+                await self._log("info", f"Activation individuelle terminée : {activated_count} activée(s), {failed_count} ignorée(s).", step="wpress_import")
 
 
 
@@ -783,23 +803,36 @@ class WordPressManager:
 
     # ── Mises à jour ──────────────────────────────────────────────
 
-    async def list_updates(self) -> dict:
+    async def list_updates(self, use_cache: bool = True) -> dict:
         """
         Liste toutes les mises à jour disponibles (Core, Plugins, Thèmes).
-
-        Returns:
-            Dict avec les mises à jour triées par type.
+        Utilise le cache mémoire si disponible et frais (< 15 min).
         """
-        await self._log("info", "Vérification des mises à jour disponibles...", step="updates_list")
+        now = time.time()
+        ttl_seconds = settings.updates_cache_ttl_minutes * 60
+        if use_cache and self.project_name in _updates_cache:
+            cache_time, cached_result = _updates_cache[self.project_name]
+            if now - cache_time < ttl_seconds:
+                await self._log("info", f"⚡ Mises à jour récupérées depuis le cache ({int(now - cache_time)}s)...", step="updates_list")
+                return cached_result
+
+        await self._log("info", "Vérification des mises à jour disponibles (parallèle)...", step="updates_list")
 
         result: dict = {"core": None, "plugins": [], "themes": [], "total_available": 0}
 
-        # Core
-        core_result = await run_wp_cli(
-            "core check-update --format=json", str(self.project_dir)
+        # Exécuter les 3 commandes WP-CLI en parallèle
+        core_task = run_wp_cli("core check-update --format=json", str(self.project_dir))
+        plugins_task = run_wp_cli("plugin list --update=available --format=json", str(self.project_dir))
+        themes_task = run_wp_cli("theme list --update=available --format=json", str(self.project_dir))
+
+        core_result, plugins_result, themes_result = await asyncio.gather(
+            core_task, plugins_task, themes_task
         )
+
+        import json
+
+        # Core
         if core_result.success and core_result.stdout.strip():
-            import json
             try:
                 core_updates = json.loads(core_result.stdout)
                 if core_updates:
@@ -817,11 +850,7 @@ class WordPressManager:
                 pass
 
         # Plugins
-        plugins_result = await run_wp_cli(
-            "plugin list --update=available --format=json", str(self.project_dir)
-        )
         if plugins_result.success and plugins_result.stdout.strip():
-            import json
             try:
                 plugins = json.loads(plugins_result.stdout)
                 for p in plugins:
@@ -837,11 +866,7 @@ class WordPressManager:
                 pass
 
         # Thèmes
-        themes_result = await run_wp_cli(
-            "theme list --update=available --format=json", str(self.project_dir)
-        )
         if themes_result.success and themes_result.stdout.strip():
-            import json
             try:
                 themes = json.loads(themes_result.stdout)
                 for t in themes:
@@ -855,6 +880,8 @@ class WordPressManager:
                 result["total_available"] += len(themes)
             except json.JSONDecodeError:
                 pass
+
+        _updates_cache[self.project_name] = (time.time(), result)
 
         await self._log(
             "info",
@@ -884,22 +911,26 @@ class WordPressManager:
         await self._log("info", "Application des mises à jour...", step="updates_apply")
         results: list[UpdateResult] = []
 
-        # Core
+        # Core (Mise à jour rapide via Python natif)
         if update_core:
-            await self._log("info", "Mise à jour du core WordPress...", step="updates_apply")
+            await self._log("info", "Mise à jour ultra-rapide du core WordPress...", step="updates_apply")
             await run_wp_cli("option delete core_updater.lock", str(self.project_dir))
             current = await run_wp_cli("core version", str(self.project_dir))
-            core_result = await run_wp_cli("core update", str(self.project_dir), timeout=180)
             
-            # Fallback de réparation si la copie directe des fichiers coeur a échoué
-            if not core_result.success:
-                await self._log("warning", "Mise à jour standard échouée, tentative de réparation via core download --skip-content...", step="updates_apply")
-                await run_wp_cli("option delete core_updater.lock", str(self.project_dir))
-                core_result = await run_wp_cli("core download --force --skip-content", str(self.project_dir), timeout=180)
+            # Utilisation directe du téléchargeur/extracteur Python natif (2 à 5 secondes)
+            dl_res = await self.download_wordpress()
+            if dl_res.success:
+                core_result = CommandResult(
+                    returncode=0,
+                    stdout="WordPress core mis à jour avec succès via extraction directe Python.",
+                    stderr="",
+                    command="download_wordpress"
+                )
+            else:
+                await self._log("warning", "Extraction directe échouée, tentative fallback via WP-CLI...", step="updates_apply")
+                core_result = await run_wp_cli("core update --force", str(self.project_dir), timeout=120)
 
             new_version = await run_wp_cli("core version", str(self.project_dir))
-
-
 
             results.append(UpdateResult(
                 name="wordpress",
@@ -914,56 +945,43 @@ class WordPressManager:
             if core_result.success:
                 await run_wp_cli("core update-db", str(self.project_dir))
 
-        # Plugins
-        for plugin_name in (plugin_names or []):
-            await self._log("info", f"Mise à jour du plugin : {plugin_name}", step="updates_apply")
-            # Récupérer la version actuelle
-            info_result = await run_wp_cli(
-                f"plugin get {plugin_name} --field=version", str(self.project_dir)
-            )
-            old_version = info_result.stdout.strip() if info_result.success else "unknown"
+        # Plugins (Mise à jour groupée)
+        if plugin_names:
+            valid_plugins = [p for p in plugin_names if p]
+            if valid_plugins:
+                p_str = " ".join(valid_plugins)
+                await self._log("info", f"Mise à jour groupée des plugins ({len(valid_plugins)}) : {p_str}", step="updates_apply")
+                update_result = await run_wp_cli(f"plugin update {p_str}", str(self.project_dir), timeout=240)
+                
+                for plugin_name in valid_plugins:
+                    new_info = await run_wp_cli(f"plugin get {plugin_name} --field=version", str(self.project_dir))
+                    results.append(UpdateResult(
+                        name=plugin_name,
+                        type="plugin",
+                        success=update_result.success or plugin_name in update_result.stdout,
+                        message=update_result.stdout if update_result.success else update_result.stderr,
+                        old_version="unknown",
+                        new_version=new_info.stdout.strip() if new_info.success else None,
+                    ))
 
-            update_result = await run_wp_cli(
-                f"plugin update {plugin_name}", str(self.project_dir), timeout=120
-            )
-
-            new_info = await run_wp_cli(
-                f"plugin get {plugin_name} --field=version", str(self.project_dir)
-            )
-
-            results.append(UpdateResult(
-                name=plugin_name,
-                type="plugin",
-                success=update_result.success,
-                message=update_result.stdout if update_result.success else update_result.stderr,
-                old_version=old_version,
-                new_version=new_info.stdout.strip() if update_result.success else None,
-            ))
-
-        # Thèmes
-        for theme_name in (theme_names or []):
-            await self._log("info", f"Mise à jour du thème : {theme_name}", step="updates_apply")
-            info_result = await run_wp_cli(
-                f"theme get {theme_name} --field=version", str(self.project_dir)
-            )
-            old_version = info_result.stdout.strip() if info_result.success else "unknown"
-
-            update_result = await run_wp_cli(
-                f"theme update {theme_name}", str(self.project_dir), timeout=120
-            )
-
-            new_info = await run_wp_cli(
-                f"theme get {theme_name} --field=version", str(self.project_dir)
-            )
-
-            results.append(UpdateResult(
-                name=theme_name,
-                type="theme",
-                success=update_result.success,
-                message=update_result.stdout if update_result.success else update_result.stderr,
-                old_version=old_version,
-                new_version=new_info.stdout.strip() if update_result.success else None,
-            ))
+        # Thèmes (Mise à jour groupée)
+        if theme_names:
+            valid_themes = [t for t in theme_names if t]
+            if valid_themes:
+                t_str = " ".join(valid_themes)
+                await self._log("info", f"Mise à jour groupée des thèmes ({len(valid_themes)}) : {t_str}", step="updates_apply")
+                update_result = await run_wp_cli(f"theme update {t_str}", str(self.project_dir), timeout=240)
+                
+                for theme_name in valid_themes:
+                    new_info = await run_wp_cli(f"theme get {theme_name} --field=version", str(self.project_dir))
+                    results.append(UpdateResult(
+                        name=theme_name,
+                        type="theme",
+                        success=update_result.success or theme_name in update_result.stdout,
+                        message=update_result.stdout if update_result.success else update_result.stderr,
+                        old_version="unknown",
+                        new_version=new_info.stdout.strip() if new_info.success else None,
+                    ))
 
         # Résumé
         success_count = sum(1 for r in results if r.success)
@@ -1032,10 +1050,10 @@ class WordPressManager:
         # Page d'accueil
         pages.append({"url": site_url, "name": "accueil", "type": "home"})
 
-        # Récupérer toutes les pages publiées
+        # Récupérer toutes les pages publiées (max 10)
         page_result = await run_wp_cli(
             'post list --post_type=page --post_status=publish'
-            ' --fields=ID,post_title,post_name --format=json',
+            ' --fields=ID,post_title,post_name,url --format=json --skip-plugins --skip-themes',
             str(self.project_dir),
         )
         if page_result.success and page_result.stdout.strip():
@@ -1043,20 +1061,16 @@ class WordPressManager:
             try:
                 all_pages = json.loads(page_result.stdout)
                 for pg in all_pages[:10]:
-                    url_result = await run_wp_cli(
-                        f"post get {pg['ID']} --field=url", str(self.project_dir)
-                    )
-                    url = url_result.stdout.strip() if url_result.success else f"{site_url}/?page_id={pg['ID']}"
-                    name = pg.get("post_name", f"page-{pg['ID']}")
+                    url = pg.get("url") or f"{site_url}/?page_id={pg['ID']}"
+                    name = pg.get("post_name") or f"page-{pg['ID']}"
                     pages.append({"url": url, "name": name, "type": "page"})
             except (json.JSONDecodeError, KeyError):
                 pass
 
-
-        # Récupérer les articles publiés (limité à 10 max)
+        # Récupérer les articles publiés (max 10)
         posts_result = await run_wp_cli(
             'post list --post_type=post --post_status=publish'
-            ' --fields=ID,post_title,post_name --format=json',
+            ' --fields=ID,post_title,post_name,url --format=json --skip-plugins --skip-themes',
             str(self.project_dir),
         )
         if posts_result.success and posts_result.stdout.strip():
@@ -1064,11 +1078,8 @@ class WordPressManager:
             try:
                 all_posts = json.loads(posts_result.stdout)
                 for post in all_posts[:10]:
-                    url_result = await run_wp_cli(
-                        f"post get {post['ID']} --field=url", str(self.project_dir)
-                    )
-                    url = url_result.stdout.strip() if url_result.success else f"{site_url}/?p={post['ID']}"
-                    name = post.get("post_name", f"post-{post['ID']}")
+                    url = post.get("url") or f"{site_url}/?p={post['ID']}"
+                    name = post.get("post_name") or f"post-{post['ID']}"
                     pages.append({"url": url, "name": name, "type": "post"})
             except (json.JSONDecodeError, KeyError):
                 pass

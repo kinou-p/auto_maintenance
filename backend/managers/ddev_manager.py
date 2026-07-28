@@ -151,6 +151,8 @@ class DDEVManager:
             "innodb_doublewrite = 0\n"
             "max_allowed_packet = 1G\n"
             "innodb_buffer_pool_size = 512M\n"
+            "sync_binlog = 0\n"
+            "innodb_io_capacity = 2000\n"
         )
         await self._log("info", "Configuration MariaDB optimisée (fast transaction log applied)")
 
@@ -245,6 +247,44 @@ class DDEVManager:
             
         # 4. Start
         return await self.start()
+
+    # ── MariaDB Snapshots ─────────────────────────────────────────
+
+    async def create_snapshot(self, snapshot_name: str = "pre_updates") -> CommandResult:
+        """
+        Crée un snapshot MariaDB ultra-rapide (< 1 seconde).
+
+        Args:
+            snapshot_name: Nom du snapshot.
+        """
+        await self._log("info", f"📸 Création du snapshot MariaDB '{snapshot_name}'...")
+        cmd = f"ddev snapshot --name={snapshot_name}"
+        result = await run_ddev_command(cmd, str(self.project_dir), timeout=60)
+
+        if result.success:
+            await self._log("success", f"Snapshot MariaDB '{snapshot_name}' créé avec succès.")
+        else:
+            await self._log("warning", f"Impossible de créer le snapshot MariaDB : {result.stderr}")
+
+        return result
+
+    async def restore_snapshot(self, snapshot_name: str = "pre_updates") -> CommandResult:
+        """
+        Restaure un snapshot MariaDB en environ 1 seconde.
+
+        Args:
+            snapshot_name: Nom du snapshot à restaurer.
+        """
+        await self._log("info", f"🔄 Restauration instantanée du snapshot MariaDB '{snapshot_name}'...")
+        cmd = f"ddev snapshot restore {snapshot_name}"
+        result = await run_ddev_command(cmd, str(self.project_dir), timeout=90)
+
+        if result.success:
+            await self._log("success", f"Snapshot MariaDB '{snapshot_name}' restauré en ~1s.")
+        else:
+            await self._log("error", f"Échec de la restauration du snapshot : {result.stderr}")
+
+        return result
 
     async def get_status(self) -> dict:
         """Récupère le statut du projet DDEV."""
