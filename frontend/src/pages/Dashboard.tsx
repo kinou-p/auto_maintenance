@@ -227,8 +227,12 @@ export function Dashboard() {
   }, [fetchQueueInfo]);
 
   const handleStartWorkflow = async () => {
-    if (!currentProject) return;
-    if (!confirm(`Lancer la procédure complète de maintenance pour "${currentProject.name}" ?`)) return;
+    console.log('[CLICK] handleStartWorkflow triggered', { currentProject });
+    if (!currentProject) {
+      alert('Aucun projet sélectionné !');
+      return;
+    }
+    if (!window.confirm(`Lancer la procédure complète de maintenance pour "${currentProject.name}" ?`)) return;
     setWorkflowLoading(true);
     clearLogs();
 
