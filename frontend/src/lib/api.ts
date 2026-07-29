@@ -105,6 +105,11 @@ function uploadWithProgress<T>(
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
 
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    }
+
     if (controller) {
       controller.abort = () => {
         xhr.abort();

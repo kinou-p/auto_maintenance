@@ -82,24 +82,55 @@ async def get_current_user(token: Optional[str] = Depends(oauth2_scheme)) -> Use
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    payload = decode_access_token(token)
-    user_id: Optional[int] = payload.get("sub")
-    if user_id is None:
+    try:
+        payload = decode_access_token(token)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Token invalide ou décodage échoué: {str(e)}",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_id = payload.get("sub")
+    username = payload.get("username")
+
+    if user_id is None and not username:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token invalide (identifiant manquant)",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    async with async_session() as session:
-        user = await session.get(User, int(user_id))
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Utilisateur non trouvé",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        return user
+    try:
+        async with async_session() as session:
+            user = None
+            if user_id is not None:
+                try:
+                    user = await session.get(User, int(user_id))
+                except Exception:
+                    user = None
+
+            if not user and username:
+                result = await session.execute(select(User).where(User.username == str(username)))
+                user = result.scalar_one_or_none()
+
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Utilisateur non trouvé dans la base de données",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            return user
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Erreur d'accès à la base de données d'authentification: {str(e)}",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 async def get_ws_current_user(token: Optional[str] = Query(None)) -> Optional[User]:
