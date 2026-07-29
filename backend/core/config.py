@@ -42,11 +42,11 @@ class Settings(BaseSettings):
     # --- Frontend ---
     frontend_url: str = "http://localhost:5173"
     frontend_port: int = 5173
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    cors_origins: list[str] | str = ["http://localhost:5173", "http://localhost:3000"]
 
     @field_validator("cors_origins", mode="before")
     @classmethod
-    def _parse_cors_origins(cls, v):
+    def _parse_cors_origins(cls, v) -> list[str]:
         if isinstance(v, str):
             v = v.strip()
             if v.startswith("[") and v.endswith("]"):
