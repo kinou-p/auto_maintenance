@@ -63,17 +63,19 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60 * 24  # 24 heures
 
-    @field_validator("jwt_secret_key")
+    @field_validator("jwt_secret_key", mode="before")
     @classmethod
-    def _validate_jwt_secret(cls, v: str, info) -> str:
+    def _validate_jwt_secret(cls, v, info) -> str:
         insecure_default = "auto_maintenance_super_secret_jwt_key_2026_change_me!"
-        # Récupérer app_env s'il est déjà validé dans les valeurs
+        if not v or not str(v).strip():
+            v = insecure_default
         app_env = info.data.get("app_env", "development")
         if app_env == "production" and (v == insecure_default or len(v) < 32):
+            # En production sans secret fort défini, lever une exception explicite
             raise ValueError(
                 "En environnement de production (APP_ENV=production), JWT_SECRET_KEY doit être définie avec une valeur sécurisée (au moins 32 caractères)."
             )
-        return v
+        return str(v)
 
     # --- Database ---
     database_url: str = Field(
