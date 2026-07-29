@@ -26,15 +26,20 @@ import { WorkflowProgress } from '@/components/dashboard/WorkflowProgress';
 import { QueueModal } from '@/components/dashboard/QueueModal';
 import { NotificationModal } from '@/components/dashboard/NotificationModal';
 import { ImageComparer } from '@/components/vrt/ImageComparer';
+import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { useConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Toaster, useToast } from '@/components/ui/Toaster';
+
 import { cn } from '@/lib/utils';
 import { Link, useSearchParams } from 'react-router-dom';
+import { UserMenu } from '@/components/ui/UserMenu';
+
 import {
   Play,
+
   Pause,
   Square,
   Wrench,
@@ -577,9 +582,13 @@ export function Dashboard() {
                 </span>
               )}
             </Button>
+
+            <ThemeToggle />
+            <UserMenu />
           </div>
         </div>
       </header>
+
 
       <div className="flex flex-1 overflow-hidden">
         {sidebarOpen && (

@@ -20,10 +20,12 @@ from sqlalchemy import select
 from backend.core.config import settings
 from backend.core.websocket import WorkflowLogger, ws_manager
 from backend.managers.ddev_manager import DDEVManager
+from backend.managers.docker_env_manager import DockerEnvManager
 from backend.managers.hosts_manager import HostsManager
 from backend.managers.screenshot_manager import ScreenshotManager
 from backend.managers.vrt_manager import VRTManager
 from backend.managers.wordpress_manager import WordPressManager
+
 from backend.models.database import (
     Project,
     ProjectStatus,
@@ -183,10 +185,12 @@ class WorkflowOrchestrator:
 
             # Initialiser les managers
             self._ddev = DDEVManager(project.name, self.logger)
+            self._docker = DockerEnvManager(project.name, self.logger)
             self._wp = WordPressManager(project.name, self._ddev, self.logger)
             self._hosts = HostsManager(self.logger)
             self._screenshots = ScreenshotManager(project.name, self.logger)
             self._vrt = VRTManager(project.name, self.logger)
+
 
             domain = project.domain
             wpress_file = project.wpress_file

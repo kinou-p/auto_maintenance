@@ -24,26 +24,43 @@ from backend.core.websocket import WorkflowLogger
 # Nombre max de pages capturées en parallèle (× 2 viewports = 6 contextes)
 MAX_CONCURRENT_PAGES = 3
 
-VIEWPORTS = [
-    {
-        "device": "desktop",
-        "width": settings.screenshot_desktop_width,
-        "height": settings.screenshot_desktop_height,
-        "is_mobile": False,
-        "device_scale_factor": 1,
-        "user_agent": None,
-        "has_touch": False,
-    },
-    {
-        "device": "mobile",
-        "width": settings.screenshot_mobile_width,
-        "height": settings.screenshot_mobile_height,
-        "is_mobile": True,
-        "device_scale_factor": 3,
-        "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-        "has_touch": True,
-    },
-]
+def get_configured_viewports() -> list[dict]:
+    """Retourne la liste des viewports activés dans la configuration (Multi-Breakpoints)."""
+    enabled_devices = [d.strip().lower() for d in settings.screenshot_enabled_devices.split(",")]
+    
+    all_viewports = {
+        "desktop": {
+            "device": "desktop",
+            "width": settings.screenshot_desktop_width,
+            "height": settings.screenshot_desktop_height,
+            "is_mobile": False,
+            "device_scale_factor": 1,
+            "user_agent": None,
+            "has_touch": False,
+        },
+        "tablet": {
+            "device": "tablet",
+            "width": settings.screenshot_tablet_width,
+            "height": settings.screenshot_tablet_height,
+            "is_mobile": True,
+            "device_scale_factor": 2,
+            "user_agent": "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "has_touch": True,
+        },
+        "mobile": {
+            "device": "mobile",
+            "width": settings.screenshot_mobile_width,
+            "height": settings.screenshot_mobile_height,
+            "is_mobile": True,
+            "device_scale_factor": 3,
+            "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "has_touch": True,
+        },
+    }
+    
+    res = [all_viewports[d] for d in enabled_devices if d in all_viewports]
+    return res if res else [all_viewports["desktop"], all_viewports["mobile"]]
+
 
 
 class ScreenshotManager:
@@ -223,10 +240,11 @@ class ScreenshotManager:
         Returns:
             Liste de dict avec les infos de chaque screenshot.
         """
-        # Lancer les 2 viewports en parallèle
+        # Lancer tous les viewports configurés (Multi-Breakpoints) en parallèle
+        viewports = get_configured_viewports()
         tasks = [
             self._capture_viewport(browser, url, name, page_type, output_dir, phase, vp)
-            for vp in VIEWPORTS
+            for vp in viewports
         ]
         viewport_results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -307,12 +325,20 @@ class ScreenshotManager:
             # Pause de stabilisation pour assurer le rendu complet de la page
             await page.wait_for_timeout(settings.screenshot_stabilize_delay)
 
-            # Capture
+            # Capture d'écran classique (PNG)
             await page.screenshot(
                 path=str(filepath),
                 full_page=True,
                 type="png",
             )
+
+            # Capture du DOM Snapshot (HTML + arborescence des styles) si activé
+            dom_filepath = None
+            if settings.vrt_enable_dom_snapshot:
+                dom_filename = f"{name}_{device}.dom.json"
+                dom_filepath = output_dir / dom_filename
+                dom_data = await self._capture_dom_snapshot(page)
+                dom_filepath.write_text(json.dumps(dom_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
             return {
                 "page_name": name,
@@ -320,9 +346,11 @@ class ScreenshotManager:
                 "page_type": page_type,
                 "device": device,
                 "filepath": str(filepath),
+                "dom_filepath": str(dom_filepath) if dom_filepath else None,
                 "width": vp["width"],
                 "height": vp["height"],
             }
+
 
         except Exception as e:
             await self._log("warning", f"Échec screenshot {name} ({device}): {e}", step=step)
@@ -332,9 +360,13 @@ class ScreenshotManager:
             await context.close()
 
     async def _scroll_page(self, page) -> None:
-        """Scroll progressif de la page pour déclencher le lazy loading et attendre le chargement des images."""
-        await page.evaluate("""
-            async () => {
+        """Scroll progressif et intelligent de la page pour déclencher le lazy loading et attendre le chargement des images et iframes."""
+        scroll_delay = settings.screenshot_scroll_delay_ms
+        scroll_step = settings.screenshot_scroll_step_px
+        images_timeout = settings.screenshot_images_wait_timeout_ms
+
+        await page.evaluate(f"""
+            async () => {{
                 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
                 const getScrollHeight = () => Math.max(
                     document.body.scrollHeight,
@@ -344,31 +376,33 @@ class ScreenshotManager:
                 );
                 
                 let height = getScrollHeight();
-                const step = Math.max(Math.floor(height / 10), 400);
+                const step = Math.max(Math.floor(height / 10), {scroll_step});
                 
-                for (let i = 0; i < height; i += step) {
-                    window.scrollTo({top: i, behavior: 'auto'});
-                    await delay(60);
-                }
+                for (let i = 0; i < height; i += step) {{
+                    window.scrollTo({{top: i, behavior: 'auto'}});
+                    await delay({scroll_delay});
+                    // Mettre à jour la hauteur au cas où du contenu dynamique est chargé
+                    height = getScrollHeight();
+                }}
                 
-                window.scrollTo({top: height, behavior: 'auto'});
-                await delay(300);
+                window.scrollTo({{top: height, behavior: 'auto'}});
+                await delay(200);
 
-                // Attendre le chargement effectif de toutes les images
-                const imagePromises = Array.from(document.images).map(img => {
+                // Attendre le chargement effectif de toutes les images et iframes visibles
+                const imagePromises = Array.from(document.images).map(img => {{
                     if (img.complete) return Promise.resolve();
-                    return new Promise(resolve => {
-                        img.addEventListener('load', resolve, { once: true });
-                        img.addEventListener('error', resolve, { once: true });
-                    });
-                });
+                    return new Promise(resolve => {{
+                        img.addEventListener('load', resolve, {{ once: true }});
+                        img.addEventListener('error', resolve, {{ once: true }});
+                    }});
+                }});
                 
-                // Timeout de sécurité de 3s pour la résolution des images
+                // Timeout de sécurité pour le chargement des images
                 await Promise.race([
                     Promise.all(imagePromises),
-                    delay(3000)
+                    delay({images_timeout})
                 ]);
-            }
+            }}
         """)
 
     async def _hide_dynamic_elements(self, page) -> None:
@@ -415,3 +449,40 @@ class ScreenshotManager:
                 document.head.appendChild(style);
             }
         """)
+
+    async def _capture_dom_snapshot(self, page) -> dict:
+        """Sériealise et extrait l'arborescence DOM statique avec métadonnées structurelles."""
+        return await page.evaluate("""
+            () => {
+                const getElementTree = (node) => {
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        const text = node.textContent.trim();
+                        return text ? { type: 'text', content: text } : null;
+                    }
+                    if (node.nodeType !== Node.ELEMENT_NODE) return null;
+                    
+                    const tag = node.tagName.toLowerCase();
+                    if (['script', 'style', 'svg', 'noscript'].includes(tag)) return null;
+
+                    const children = [];
+                    node.childNodes.forEach(child => {
+                        const childTree = getElementTree(child);
+                        if (childTree) children.push(childTree);
+                    });
+
+                    return {
+                        tag: tag,
+                        id: node.id || undefined,
+                        class: node.className || undefined,
+                        children: children.length > 0 ? children : undefined
+                    };
+                };
+
+                return {
+                    title: document.title,
+                    url: window.location.href,
+                    tree: getElementTree(document.body)
+                };
+            }
+        """)
+

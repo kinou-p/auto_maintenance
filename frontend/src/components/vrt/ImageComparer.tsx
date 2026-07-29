@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/Badge';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, Sliders, Columns, Eye, ExternalLink, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 interface ImageComparerProps {
   beforeSrc: string;
@@ -79,12 +79,13 @@ export function ImageComparer({
   };
 
   return (
-    <div className="space-y-3 border border-border rounded-lg p-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-2">
+    <div className="group border border-border/80 hover:border-primary/40 rounded-xl bg-card/60 backdrop-blur-xs transition-all duration-300 shadow-xs hover:shadow-md overflow-hidden">
+      {/* Header Bar */}
+      <div className="p-3 sm:p-4 flex items-center justify-between flex-wrap gap-3 bg-muted/20 border-b border-border/40">
+        <div className="flex items-center gap-2.5 flex-wrap">
           <button
             onClick={onToggleCollapse}
-            className="p-0.5 hover:bg-muted rounded transition-colors"
+            className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-md transition-colors"
             aria-label={isCollapsed ? 'Déplier' : 'Replier'}
           >
             {isCollapsed ? (
@@ -93,11 +94,24 @@ export function ImageComparer({
               <ChevronUp className="h-4 w-4" />
             )}
           </button>
-          <h4 className="text-sm font-semibold">{pageName}</h4>
-          <Badge variant="outline">{device}</Badge>
+          <span className="font-semibold text-sm tracking-tight text-foreground">{pageName}</span>
+          <Badge variant="outline" className="text-[11px] font-mono capitalize px-2 py-0.5 bg-background/50">
+            {device}
+          </Badge>
           {passed !== undefined && (
-            <Badge variant={passed ? 'success' : 'destructive'}>
-              {passed ? 'PASS' : 'FAIL'}
+            <Badge
+              variant={passed ? 'success' : 'destructive'}
+              className="text-[11px] font-bold px-2 py-0.5 shadow-xs flex items-center gap-1"
+            >
+              {passed ? (
+                <>
+                  <CheckCircle2 className="h-3 w-3" /> PASS
+                </>
+              ) : (
+                <>
+                  <AlertTriangle className="h-3 w-3" /> FAIL
+                </>
+              )}
             </Badge>
           )}
           {pageUrl && (
@@ -105,47 +119,86 @@ export function ImageComparer({
               href={pageUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-xs text-muted-foreground hover:text-primary underline"
+              className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors hover:underline"
               onClick={(e) => e.stopPropagation()}
             >
-              {pageUrl}
+              <ExternalLink className="h-3 w-3 shrink-0" />
+              <span className="truncate max-w-[200px]">{pageUrl}</span>
             </a>
           )}
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+
+        <div className="flex items-center gap-3 text-xs font-mono text-muted-foreground bg-background/40 px-2.5 py-1 rounded-lg border border-border/30">
           {diffPercentage !== undefined && (
-            <span>Diff: {diffPercentage.toFixed(2)}%</span>
+            <div className="flex items-center gap-1">
+              <span>Diff:</span>
+              <span className={cn(
+                "font-semibold",
+                diffPercentage > 0 ? "text-amber-500 dark:text-amber-400" : "text-emerald-500"
+              )}>
+                {diffPercentage.toFixed(2)}%
+              </span>
+            </div>
           )}
           {ssimScore !== undefined && (
-            <span>SSIM: {ssimScore.toFixed(4)}</span>
+            <div className="flex items-center gap-1 border-l border-border/50 pl-3">
+              <span>SSIM:</span>
+              <span className="font-semibold text-foreground">{ssimScore.toFixed(4)}</span>
+            </div>
           )}
         </div>
       </div>
 
       {!isCollapsed && (
-        <>
-          <div className="flex gap-1">
-            {(['slider', 'side-by-side', 'diff'] as const).map((mode) => (
+        <div className="p-4 space-y-4">
+          {/* Mode Switcher Buttons */}
+          <div className="inline-flex p-1 bg-muted/40 rounded-lg border border-border/40 gap-1">
+            <button
+              onClick={() => setViewMode('slider')}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-200',
+                viewMode === 'slider'
+                  ? 'bg-background text-foreground shadow-xs'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+              )}
+            >
+              <Sliders className="h-3.5 w-3.5" />
+              Slider
+            </button>
+            <button
+              onClick={() => setViewMode('side-by-side')}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-200',
+                viewMode === 'side-by-side'
+                  ? 'bg-background text-foreground shadow-xs'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+              )}
+            >
+              <Columns className="h-3.5 w-3.5" />
+              Côte à côte
+            </button>
+            {diffSrc && (
               <button
-                key={mode}
-                onClick={() => setViewMode(mode)}
+                onClick={() => setViewMode('diff')}
                 className={cn(
-                  'px-3 py-1 text-xs rounded transition-colors',
-                  viewMode === mode
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+                  'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-200',
+                  viewMode === 'diff'
+                    ? 'bg-background text-foreground shadow-xs'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
                 )}
               >
-                {mode === 'slider' ? 'Slider' : mode === 'side-by-side' ? 'Côte à côte' : 'Diff'}
+                <Eye className="h-3.5 w-3.5" />
+                Diff Image
               </button>
-            ))}
+            )}
           </div>
 
+          {/* Slider Mode */}
           {viewMode === 'slider' && (
             <div
               ref={containerRef}
-              className="relative w-full overflow-hidden rounded-lg border border-border cursor-col-resize select-none"
-              style={{ aspectRatio: device === 'mobile' ? '375/812' : '16/9', maxHeight: '500px' }}
+              className="relative w-full overflow-hidden rounded-xl border border-border/60 shadow-inner bg-black/5 cursor-col-resize select-none group/slider"
+              style={{ aspectRatio: device === 'mobile' ? '375/700' : '16/9', maxHeight: '550px' }}
               onMouseDown={() => setIsDragging(true)}
               onMouseUp={() => setIsDragging(false)}
               onMouseLeave={() => setIsDragging(false)}
@@ -164,62 +217,78 @@ export function ImageComparer({
                 src={getScreenshotUrl(beforeSrc)}
                 alt="Avant"
                 loading="lazy"
-                className="absolute inset-0 w-full h-full object-cover object-top"
+                className="absolute inset-0 w-full h-full object-cover object-top transition-all"
                 style={{ clipPath: `inset(0 ${100 - sliderPos}% 0 0)` }}
               />
+              {/* Divider Line & Handle */}
               <div
-                className="absolute top-0 bottom-0 w-0.5 bg-white shadow-lg z-10"
+                className="absolute top-0 bottom-0 w-0.5 bg-white shadow-[0_0_10px_rgba(0,0,0,0.5)] z-10"
                 style={{ left: `${sliderPos}%` }}
               >
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-8 w-8 rounded-full bg-white shadow-lg flex items-center justify-center">
-                  <span className="text-xs font-bold text-gray-800">⇔</span>
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-9 w-9 rounded-full bg-white/90 backdrop-blur-md shadow-lg border border-black/10 flex items-center justify-center text-slate-800 transition-transform hover:scale-110">
+                  <Sliders className="h-4 w-4 rotate-90 text-primary" />
                 </div>
               </div>
-              <span className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded">
+
+              {/* Labels */}
+              <span className="absolute top-3 left-3 bg-black/70 backdrop-blur-md text-white text-[11px] font-semibold px-2.5 py-1 rounded-md shadow-xs border border-white/10">
                 AVANT
               </span>
-              <span className="absolute top-2 right-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded">
+              <span className="absolute top-3 right-3 bg-black/70 backdrop-blur-md text-white text-[11px] font-semibold px-2.5 py-1 rounded-md shadow-xs border border-white/10">
                 APRÈS
               </span>
             </div>
           )}
 
+          {/* Side by Side Mode */}
           {viewMode === 'side-by-side' && (
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">Avant</span>
-                <img
-                  src={getScreenshotUrl(beforeSrc)}
-                  alt="Avant"
-                  loading="lazy"
-                  className="w-full rounded-lg border border-border"
-                />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Avant</span>
+                </div>
+                <div className="rounded-xl overflow-hidden border border-border/60 shadow-xs bg-muted/10">
+                  <img
+                    src={getScreenshotUrl(beforeSrc)}
+                    alt="Avant"
+                    loading="lazy"
+                    className="w-full object-cover object-top max-h-[500px]"
+                  />
+                </div>
               </div>
-              <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">Après</span>
-                <img
-                  src={getScreenshotUrl(afterSrc)}
-                  alt="Après"
-                  loading="lazy"
-                  className="w-full rounded-lg border border-border"
-                />
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Après</span>
+                </div>
+                <div className="rounded-xl overflow-hidden border border-border/60 shadow-xs bg-muted/10">
+                  <img
+                    src={getScreenshotUrl(afterSrc)}
+                    alt="Après"
+                    loading="lazy"
+                    className="w-full object-cover object-top max-h-[500px]"
+                  />
+                </div>
               </div>
             </div>
           )}
 
+          {/* Diff Image Mode */}
           {viewMode === 'diff' && diffSrc && (
-            <div className="space-y-1">
-              <span className="text-xs text-muted-foreground">Image de diff</span>
-              <img
-                src={getScreenshotUrl(diffSrc)}
-                alt="Diff"
-                loading="lazy"
-                className="w-full rounded-lg border border-border"
-              />
+            <div className="space-y-1.5">
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Visualisation Diff</span>
+              <div className="rounded-xl overflow-hidden border border-border/60 shadow-xs bg-black/20 p-2">
+                <img
+                  src={getScreenshotUrl(diffSrc)}
+                  alt="Diff"
+                  loading="lazy"
+                  className="w-full object-cover object-top max-h-[550px] rounded-lg"
+                />
+              </div>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );
 }
+

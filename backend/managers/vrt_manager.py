@@ -105,6 +105,18 @@ class VRTManager:
                 progress = ((i + 1) / len(common_files)) * 100
                 await self.logger.progress("vrt_compare", progress, f"Comparaison : {filename}")
 
+            # Vérifier la présence des DOM Snapshots correspondants
+            dom_before_file = before_dir / filename.replace(".png", ".dom.json")
+            dom_after_file = after_dir / filename.replace(".png", ".dom.json")
+            dom_similarity = None
+            if dom_before_file.exists() and dom_after_file.exists():
+                try:
+                    dom_before = json.loads(dom_before_file.read_text(encoding="utf-8"))
+                    dom_after = json.loads(dom_after_file.read_text(encoding="utf-8"))
+                    dom_similarity = self._compare_dom_trees(dom_before.get("tree"), dom_after.get("tree"))
+                except Exception:
+                    pass
+
             result = await self.compare_images(
                 str(before_files[filename]),
                 str(after_files[filename]),
@@ -125,8 +137,10 @@ class VRTManager:
                 "before_path": rel_before,
                 "after_path": rel_after,
                 "diff_image": rel_diff,
+                "dom_similarity": dom_similarity,
             })
             return result
+
 
         tasks = [compare_single(i, fn) for i, fn in enumerate(sorted(common_files))]
         results = await asyncio.gather(*tasks)
@@ -321,3 +335,30 @@ class VRTManager:
         if diff_percentage <= 5.0:
             return "warning"
         return "fail"
+
+    def _compare_dom_trees(self, tree_before: Optional[dict], tree_after: Optional[dict]) -> float:
+        """Calcule un score de similarité entre deux arbres DOM (0.0 à 1.0)."""
+        if not tree_before or not tree_after:
+            return 0.0
+
+        def flatten_nodes(node) -> list[str]:
+            if not isinstance(node, dict):
+                return []
+            if node.get("type") == "text":
+                return [f"text:{node.get('content', '')}"]
+            
+            nodes = [f"tag:{node.get('tag', '')}#id:{node.get('id', '')}.cls:{node.get('class', '')}"]
+            for child in node.get("children", []):
+                nodes.extend(flatten_nodes(child))
+            return nodes
+
+        nodes1 = set(flatten_nodes(tree_before))
+        nodes2 = set(flatten_nodes(tree_after))
+
+        if not nodes1 and not nodes2:
+            return 1.0
+        
+        intersection = len(nodes1 & nodes2)
+        union = len(nodes1 | nodes2)
+        return round(intersection / union, 4) if union > 0 else 1.0
+

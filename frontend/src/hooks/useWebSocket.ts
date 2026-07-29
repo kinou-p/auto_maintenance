@@ -26,7 +26,9 @@ export function useWebSocket(projectId?: number) {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
       const path = projectId != null ? `/ws/${projectId}` : '/ws';
-      const url = `${protocol}//${host}${path}`;
+      const token = localStorage.getItem('auth_token');
+      const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : '';
+      const url = `${protocol}//${host}${path}${tokenQuery}`;
 
       const ws = new WebSocket(url);
       wsRef.current = ws;

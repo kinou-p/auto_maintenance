@@ -8,15 +8,17 @@ Auto Maintenance est une solution complète pour orchestrer et sécuriser la mai
 
 ## 🚀 Fonctionnalités
 
-- **Gestion de projets DDEV** : Création, import et gestion de sites WordPress locaux.
-- **Mises à jour automatisées** : Détection et application des mises à jour WordPress.
-- **Visual Regression Testing (VRT)** :
-  - Capture d'écran automatique (Desktop & Mobile) via Playwright.
-  - Comparaison "Pixel Perfect" avant/après mise à jour.
-  - Détection des changements visuels indésirables.
-- **Rapports détaillés** : Historique des maintenances et preuves visuelles.
-- **Logs en temps réel** : Suivi des opérations via WebSocket.
-- **Architecture moderne** : Backend FastAPI (Python) + Frontend React/Vite.
+- **Système d'Authentification & Admin Setup** : Inscription de l'admin initial, connexion JWT sécurisée, protection des routes backend & frontend et gestion d'utilisateurs.
+- **Thème Sombre / Clair** : Basculement dynamique de thème (Dark/Light mode) et profil utilisateur avec déconnexion.
+- **Visual Regression Testing (VRT) avancé** :
+  - Capture d'écran automatique (Desktop & Mobile) via Playwright (gestion robuste des timeouts, scroll progressif et animations).
+  - Comparaison "Pixel Perfect" avant/après mise à jour avec basculement 2-up, slider interactif, overlay et différence d'images.
+  - Détection et surlignage des changements visuels indésirables.
+- **Bouton de navigation rapide** : Bouton flottant pour défiler rapidement en haut/bas de page.
+- **Gestion de projets DDEV** : Création, import, gestion et détection d'erreurs (auto-réparation `project_list.yaml`, nettoyage des réseaux orphelins, retry DDEV router).
+- **Mises à jour automatisées & Workflow** : Détection et application des mises à jour WordPress avec suivi des statuts (`pending`, etc.).
+- **Rapports détaillés & Logs** : Historique des maintenances, preuves visuelles et logs en temps réel via WebSocket avec filtrage et recherche.
+- **Architecture moderne** : Backend FastAPI (Python) avec authentification JWT/Passlib + Frontend React/Vite/TailwindCSS/Lucide-react.
 
 ## 📋 Prérequis
 

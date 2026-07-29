@@ -34,6 +34,7 @@ data/scratch/
 data/screenshots/
 data/reports/
 data/uploads/
+data/docker-projects/
 *.tsbuildinfo
 
 

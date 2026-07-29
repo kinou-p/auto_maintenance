@@ -25,16 +25,33 @@ async function apiFetch<T>(
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 
   try {
+    const token = localStorage.getItem('auth_token');
+    const headers: Record<string, string> = {
+      ...options?.headers as Record<string, string>,
+    };
+
+    if (!(options?.body instanceof FormData) && !headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const res = await fetch(`${API_BASE}${path}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options?.headers,
-      },
       ...options,
+      headers,
       signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
+
+    if (res.status === 401) {
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('auth_user');
+      window.location.href = '/login';
+      throw new Error('Session expirée ou non autorisée');
+    }
 
     if (!res.ok) {
       const error = await res.json().catch(() => ({ detail: res.statusText }));

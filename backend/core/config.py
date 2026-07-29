@@ -43,18 +43,30 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:5173"
     frontend_port: int = 5173
 
+    # --- Security & Auth ---
+    jwt_secret_key: str = "auto_maintenance_super_secret_jwt_key_2026_change_me!"
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 60 * 24  # 24 heures
+
     # --- Database ---
     database_url: str = Field(
         default=f"sqlite+aiosqlite:///{BASE_DIR / 'data' / 'auto_maintenance.db'}"
     )
 
-    # --- DDEV ---
+    # --- Docker Environments ---
+    docker_projects_dir: Path = Field(default_factory=lambda: BASE_DIR / "data" / "docker-projects")
+    docker_base_port: int = 8080
+    vrt_enable_dom_snapshot: bool = True
+    vrt_dom_similarity_threshold: float = 0.95
+
+    # --- DDEV (compatibilité / legacy) ---
     ddev_projects_dir: Path = Field(default_factory=_default_ddev_projects_dir)
     # Chemin hôte pour Docker-in-Docker (identique hôte/container si monté)
     host_ddev_projects: Optional[Path] = None
     ddev_php_version: str = "8.2"
     ddev_webserver_type: str = "nginx-fpm"
     ddev_mariadb_version: str = "10.6"
+
 
     # --- Workflows & Concurrence ---
     max_concurrent_workflows: int = 2
@@ -78,12 +90,21 @@ class Settings(BaseSettings):
     # --- Screenshots ---
     screenshot_desktop_width: int = 1920
     screenshot_desktop_height: int = 1080
+    screenshot_tablet_width: int = 768
+    screenshot_tablet_height: int = 1024
     screenshot_mobile_width: int = 375
     screenshot_mobile_height: int = 812
+    # Multi-Breakpoints actifs par défaut: 'desktop', 'tablet', 'mobile' (séparés par virgule ou liste)
+    screenshot_enabled_devices: str = "desktop,mobile"
     playwright_timeout: int = 60000  # 60s pour permettre le chargement complet CSS/fonts
     screenshot_load_timeout: int = 15000  # 15s max d'attente pour le load state
     screenshot_networkidle_timeout: int = 5000  # 5s max d'attente pour le networkidle
     screenshot_stabilize_delay: int = 1000  # 1000ms de pause de stabilisation avant capture
+    # Wait/Scroll intelligent
+    screenshot_scroll_delay_ms: int = 60  # Délai entre chaque palier de scroll
+    screenshot_scroll_step_px: int = 400  # Pas de scroll en pixels
+    screenshot_images_wait_timeout_ms: int = 4000  # Attente max pour le chargement des images
+
 
     # --- VRT ---
     vrt_threshold: float = 0.1
