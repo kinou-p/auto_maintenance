@@ -25,6 +25,12 @@ jobs:
       - name: Validate Python sources
         run: python -m compileall backend cli.py start.py
 
+      - name: Install test dependencies
+        run: pip install pytest pytest-asyncio pytest-mock
+
+      - name: Run backend tests
+        run: pytest backend/tests
+
   frontend:
     runs-on: ubuntu-latest
     steps:

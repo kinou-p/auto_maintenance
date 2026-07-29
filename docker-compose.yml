@@ -16,6 +16,9 @@ services:
       - ${HOST_DDEV_PROJECTS:-./data/ddev-projects}:${DDEV_PROJECTS_DIR:-/app/data/ddev-projects}
     environment:
       - PYTHONUNBUFFERED=1
+      - APP_ENV=${APP_ENV:-production}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5180}
       - DDEV_ALLOW_ROOT=true
       - DDEV_PROJECTS_DIR=${DDEV_PROJECTS_DIR:-/app/data/ddev-projects}
       - HOST_DDEV_PROJECTS=${HOST_DDEV_PROJECTS:-}

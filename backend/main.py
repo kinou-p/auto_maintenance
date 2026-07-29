@@ -21,8 +21,9 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, status
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, status, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.projects import router as projects_router
@@ -104,17 +105,36 @@ app = FastAPI(
 )
 
 # ── CORS ──────────────────────────────────────────────────────────
+allowed_origins = list(set([settings.frontend_url, *settings.cors_origins]))
+# Filtrer les wildcards si credentials est True
+if "*" in allowed_origins:
+    allowed_origins = [origin for origin in allowed_origins if origin != "*"]
+if not allowed_origins:
+    allowed_origins = ["http://localhost:5173", "http://localhost:3000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.frontend_url,
-        "http://localhost:5173",
-        "http://localhost:3000",
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
 )
+
+# ── Global Exception Handler ──────────────────────────────────────
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger = logging.getLogger("auto_maintenance")
+    logger.error(f"Erreur serveur non gérée sur {request.url.path}: {exc}", exc_info=True)
+    if settings.app_env == "development" or settings.app_debug:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": str(exc)},
+        )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Une erreur interne du serveur est survenue."},
+    )
+
 
 # ── Routeurs API ──────────────────────────────────────────────────
 app.include_router(auth_router, prefix="/api")

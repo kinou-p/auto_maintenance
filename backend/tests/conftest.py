@@ -21,6 +21,9 @@ settings.data_dir.mkdir(parents=True, exist_ok=True)
 from httpx import ASGITransport, AsyncClient
 import backend.models.database as db_mod
 from backend.main import app
+from backend.core.auth import get_current_user
+
+app.dependency_overrides[get_current_user] = lambda: {"username": "admin", "role": "admin"}
 
 
 @pytest.fixture(autouse=True)

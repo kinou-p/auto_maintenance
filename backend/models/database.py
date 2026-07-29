@@ -25,7 +25,6 @@ from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 from backend.core.config import settings
-from backend.models.user import User  # noqa: F401
 
 
 # ── Engine & Session ──────────────────────────────────────────────
@@ -51,6 +50,9 @@ async_session = async_sessionmaker(engine, expire_on_commit=False)
 class Base(AsyncAttrs, DeclarativeBase):
     """Base déclarative partagée."""
     pass
+
+
+from backend.models.user import User  # noqa: F401
 
 
 # ── Enums ─────────────────────────────────────────────────────────
