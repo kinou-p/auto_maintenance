@@ -174,11 +174,17 @@ async def health_check() -> dict:
     ddev_installed = False
     docker_running = False
 
-    ddev_result = await run_command("ddev --version", timeout=5)
-    ddev_installed = ddev_result.success or "ddev" in ddev_result.stdout.lower() or shutil.which("ddev") is not None
+    try:
+        ddev_result = await run_command("ddev --version", timeout=5)
+        ddev_installed = ddev_result.success or "ddev" in ddev_result.stdout.lower() or shutil.which("ddev") is not None
+    except Exception:
+        ddev_installed = False
 
-    docker_result = await run_command("docker info", timeout=5)
-    docker_running = docker_result.success
+    try:
+        docker_result = await run_command("docker info", timeout=5)
+        docker_running = docker_result.success
+    except Exception:
+        docker_running = False
 
     return {
         "status": "healthy",
