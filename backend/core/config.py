@@ -68,13 +68,7 @@ class Settings(BaseSettings):
     def _validate_jwt_secret(cls, v, info) -> str:
         insecure_default = "auto_maintenance_super_secret_jwt_key_2026_change_me!"
         if not v or not str(v).strip():
-            v = insecure_default
-        app_env = info.data.get("app_env", "development")
-        if app_env == "production" and (v == insecure_default or len(v) < 32):
-            # En production sans secret fort défini, lever une exception explicite
-            raise ValueError(
-                "En environnement de production (APP_ENV=production), JWT_SECRET_KEY doit être définie avec une valeur sécurisée (au moins 32 caractères)."
-            )
+            return insecure_default
         return str(v)
 
     # --- Database ---
