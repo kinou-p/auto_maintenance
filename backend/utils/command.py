@@ -189,6 +189,35 @@ async def run_command(
     )
 
 
+def fix_corrupted_ddev_project_list(error_text: str) -> bool:
+    """
+    Détecte et répare automatiquement la corruption du fichier DDEV global project_list.yaml
+    si DDEV renvoie une erreur de type 'control characters are not allowed' ou 'unable to load DDEV global projects file'.
+    """
+    err_lower = (error_text or "").lower()
+    if "project_list.yaml" in err_lower and (
+        "control characters" in err_lower
+        or "unable to load ddev global" in err_lower
+        or "go-yaml load error" in err_lower
+    ):
+        from pathlib import Path
+        paths_to_check = [
+            Path.home() / ".ddev" / "project_list.yaml",
+            Path("~/.ddev/project_list.yaml").expanduser(),
+            Path("/home/pwuser/.ddev/project_list.yaml"),
+        ]
+        fixed = False
+        for p in paths_to_check:
+            try:
+                if p.exists():
+                    p.unlink(missing_ok=True)
+                    fixed = True
+            except Exception:
+                pass
+        return fixed
+    return False
+
+
 async def run_ddev_command(
     command: str,
     project_dir: str,
@@ -198,6 +227,7 @@ async def run_ddev_command(
 ) -> CommandResult:
     """
     Exécute une commande DDEV dans le répertoire d'un projet.
+    Répare automatiquement le fichier project_list.yaml s'il est corrompu avec des octets nuls.
     """
     # Si project_dir existe, l'utiliser comme cwd
     from pathlib import Path
@@ -213,7 +243,13 @@ async def run_ddev_command(
             parts.insert(2, proj_name)
             command = " ".join(parts)
 
-    return await run_command(command, cwd=cwd, timeout=timeout, retries=retries, on_output=on_output)
+    res = await run_command(command, cwd=cwd, timeout=timeout, retries=retries, on_output=on_output)
+
+    # Réparation automatique si project_list.yaml est corrompu par des caractères de contrôle nuls
+    if not res.success and fix_corrupted_ddev_project_list(res.stderr + " " + res.stdout):
+        res = await run_command(command, cwd=cwd, timeout=timeout, retries=retries, on_output=on_output)
+
+    return res
 
 
 async def run_wp_cli(
@@ -226,4 +262,5 @@ async def run_wp_cli(
     Exécute une commande WP-CLI via DDEV avec retransmission en direct des sorties.
     """
     full_command = f"ddev wp {wp_command}"
-    return await run_command(full_command, cwd=project_dir, timeout=timeout, on_output=on_output)
+    return await run_ddev_command(full_command, project_dir=project_dir, timeout=timeout, on_output=on_output)
+

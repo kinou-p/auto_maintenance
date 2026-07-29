@@ -172,6 +172,17 @@ class DDEVManager:
                 return result
 
             err_lower = (result.stderr or "").lower() + (result.stdout or "").lower()
+            is_yaml_corrupted = "project_list.yaml" in err_lower and ("control characters" in err_lower or "unable to load ddev global" in err_lower)
+            if is_yaml_corrupted:
+                from backend.utils.command import fix_corrupted_ddev_project_list
+                if fix_corrupted_ddev_project_list(err_lower):
+                    await self._log(
+                        "warning",
+                        f"Fichier global DDEV corrompu (project_list.yaml). Suppression et régénération automatique ({attempt}/{retries})...",
+                    )
+                    await asyncio.sleep(2)
+                    continue
+
             is_subnet_error = (
                 "all predefined address pools have been fully subnetted" in err_lower
                 or "failed to create network" in err_lower
