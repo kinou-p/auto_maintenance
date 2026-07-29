@@ -6,6 +6,7 @@ import type {
   VRTReport,
   Workflow,
   DDEVContainer,
+  SystemSettings,
 } from '@/types';
 
 const API_BASE = '/api';
@@ -374,4 +375,13 @@ export const deleteContainer = (name: string) =>
   apiFetch<{ status: string; message: string }>(`/system/containers/${name}`, {
     method: 'DELETE',
     timeout: 120000,
+  });
+
+export const getSystemSettings = () =>
+  apiFetch<SystemSettings>('/settings');
+
+export const updateSystemSettings = (payload: Partial<SystemSettings>) =>
+  apiFetch<SystemSettings>('/settings', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
   });

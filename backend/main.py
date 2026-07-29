@@ -31,6 +31,7 @@ from backend.api.updates_vrt import router as updates_vrt_router
 from backend.api.workflows import router as workflows_router
 from backend.api.system import router as system_router
 from backend.api.auth import router as auth_router
+from backend.api.settings import router as settings_router
 from backend.core.auth import get_current_user, get_ws_current_user
 from backend.core.config import settings
 from backend.core.websocket import ws_manager
@@ -140,6 +141,7 @@ app.include_router(projects_router, prefix="/api", dependencies=[Depends(get_cur
 app.include_router(workflows_router, prefix="/api", dependencies=[Depends(get_current_user)])
 app.include_router(updates_vrt_router, prefix="/api", dependencies=[Depends(get_current_user)])
 app.include_router(system_router, prefix="/api", dependencies=[Depends(get_current_user)])
+app.include_router(settings_router, prefix="/api", dependencies=[Depends(get_current_user)])
 
 # ── Fichiers statiques ───────────────────────────────────────────
 # Monter screenshots/rapports uniquement (pas les uploads .wpress)

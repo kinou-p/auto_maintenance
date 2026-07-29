@@ -39,6 +39,7 @@ from PIL import Image, ImageDraw
 
 from backend.core.config import settings
 from backend.core.websocket import WorkflowLogger
+from backend.api.settings import get_system_settings_db
 
 
 class VRTManager:
@@ -51,13 +52,24 @@ class VRTManager:
     ) -> None:
         self.project_name = project_name
         self.logger = logger
-        self.threshold = settings.vrt_threshold  # % seuil de diff
+        self.threshold = settings.vrt_threshold  # % seuil de diff par défaut
+        self.min_ssim = getattr(settings, "vrt_min_ssim_score", 0.95)
         self.aa_tolerance = settings.vrt_anti_aliasing_tolerance
         self.diff_color = (
             settings.vrt_diff_color_r,
             settings.vrt_diff_color_g,
             settings.vrt_diff_color_b,
         )
+
+    async def _load_db_settings(self) -> None:
+        """Charge les paramètres de comparaison visuelle enregistrés en base de données."""
+        try:
+            db_sys = await get_system_settings_db()
+            self.min_ssim = float(db_sys.get("vrt_min_ssim_score", 0.95))
+            self.threshold = float(db_sys.get("vrt_max_diff_percentage", settings.vrt_threshold))
+            self.aa_tolerance = int(db_sys.get("vrt_anti_aliasing_tolerance", settings.vrt_anti_aliasing_tolerance))
+        except Exception:
+            pass
 
     async def _log(self, level: str, message: str) -> None:
         if self.logger:
@@ -72,7 +84,8 @@ class VRTManager:
         Returns:
             Rapport complet de comparaison VRT.
         """
-        await self._log("info", "Démarrage de la comparaison visuelle...")
+        await self._load_db_settings()
+        await self._log("info", f"Démarrage de la comparaison visuelle (SSIM min: {self.min_ssim}, Diff max: {self.threshold}%)...")
 
         before_dir = settings.screenshots_dir / self.project_name / "before"
         after_dir = settings.screenshots_dir / self.project_name / "after"
@@ -214,7 +227,7 @@ class VRTManager:
             diff_image = self._generate_diff_image(before_img, after_img, diff_mask)
             diff_image.save(diff_output_path, "PNG")
 
-            passed = diff_percentage <= self.threshold
+            passed = (ssim_score >= self.min_ssim) and (diff_percentage <= self.threshold)
 
             return {
                 "diff_percentage": round(diff_percentage, 4),

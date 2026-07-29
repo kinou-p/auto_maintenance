@@ -9,6 +9,7 @@ const Login = lazy(() => import('@/pages/Login').then(m => ({ default: m.Login }
 const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.Dashboard })));
 const Containers = lazy(() => import('@/pages/Containers').then(m => ({ default: m.Containers })));
 const Projects = lazy(() => import('@/pages/Projects').then(m => ({ default: m.Projects })));
+const Settings = lazy(() => import('@/pages/Settings').then(m => ({ default: m.Settings })));
 
 function PageLoader() {
   return (
@@ -34,6 +35,7 @@ function App() {
             <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/projects" element={<ProtectedRoute><Projects /></ProtectedRoute>} />
             <Route path="/containers" element={<ProtectedRoute><Containers /></ProtectedRoute>} />
+            <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
             
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

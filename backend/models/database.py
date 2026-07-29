@@ -20,6 +20,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    select,
 )
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -53,6 +54,7 @@ class Base(AsyncAttrs, DeclarativeBase):
 
 
 from backend.models.user import User  # noqa: F401
+from backend.models.settings import SystemSetting  # noqa: F401
 
 
 # ── Enums ─────────────────────────────────────────────────────────
@@ -188,3 +190,24 @@ async def init_db() -> None:
                 await conn.execute(text("ALTER TABLE workflows ADD COLUMN options JSON DEFAULT '{}'"))
             if "updates_stats" not in columns:
                 await conn.execute(text("ALTER TABLE workflows ADD COLUMN updates_stats JSON DEFAULT '{}'"))
+
+    # Initialiser les paramètres système par défaut s'ils n'existent pas
+    async with async_session() as session:
+        result = await session.execute(select(SystemSetting).where(SystemSetting.key == "global"))
+        setting = result.scalar_one_or_none()
+        if not setting:
+            default_values = {
+                "vrt_min_ssim_score": 0.95,
+                "vrt_max_diff_percentage": 5.0,
+                "vrt_anti_aliasing_tolerance": 2,
+                "vrt_enable_dom_snapshot": True,
+                "screenshot_stabilize_delay": 1000,
+                "screenshot_load_timeout": 15000,
+                "screenshot_enabled_devices": "desktop,mobile",
+                "max_concurrent_workflows": 2,
+                "playwright_timeout": 60000,
+                "wp_locale": "fr_FR",
+                "wp_admin_email": "admin@localhost.local",
+            }
+            session.add(SystemSetting(key="global", value=default_values))
+            await session.commit()

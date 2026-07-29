@@ -165,3 +165,17 @@ export interface DDEVContainer {
   type: string;
   router: string;
 }
+
+export interface SystemSettings {
+  vrt_min_ssim_score: number;
+  vrt_max_diff_percentage: number;
+  vrt_anti_aliasing_tolerance: number;
+  vrt_enable_dom_snapshot: boolean;
+  screenshot_stabilize_delay: number;
+  screenshot_load_timeout: number;
+  screenshot_enabled_devices: string;
+  max_concurrent_workflows: number;
+  playwright_timeout: number;
+  wp_locale: string;
+  wp_admin_email: string;
+}

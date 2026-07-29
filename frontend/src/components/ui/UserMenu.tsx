@@ -1,6 +1,7 @@
 import React from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { LogOut, ShieldCheck } from 'lucide-react';
+import { LogOut, ShieldCheck, Sliders } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 
 export const UserMenu: React.FC = () => {
@@ -20,6 +21,13 @@ export const UserMenu: React.FC = () => {
         </div>
       </div>
       <div className="h-4 w-px bg-slate-800 my-auto ml-1" />
+      <Link
+        to="/settings"
+        title="Paramètres système"
+        className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors cursor-pointer"
+      >
+        <Sliders className="w-4 h-4" />
+      </Link>
       <button
         onClick={logout}
         title="Se déconnecter"
