@@ -179,8 +179,9 @@ async def delete_container(name: str, background_tasks: BackgroundTasks):
 
 @router.post("/system/ddev-reset")
 async def reset_ddev_global():
-    """Effectue un poweroff global DDEV (arrête tous les conteneurs DDEV)."""
+    """Effectue un poweroff global DDEV (arrête tous les conteneurs DDEV) et nettoie les réseaux Docker orphelins."""
     result = await run_command("ddev poweroff", timeout=60)
+    await run_command("docker network prune -f", timeout=30)
     if result.success:
         # Passer tous les projets en statut STOPPED
         async with async_session() as session:
@@ -191,5 +192,5 @@ async def reset_ddev_global():
             await session.commit()
 
         await ws_manager.broadcast({"type": "queue_updated"})
-        return {"status": "success", "message": "Environnement DDEV réinitialisé avec succès (power-off global)."}
+        return {"status": "success", "message": "Environnement DDEV réinitialisé avec succès (power-off global et réseaux Docker purgés)."}
     raise HTTPException(status_code=500, detail=f"Échec du reset DDEV : {result.stderr}")

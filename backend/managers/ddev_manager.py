@@ -157,7 +157,7 @@ class DDEVManager:
         await self._log("info", "Configuration MariaDB optimisée (fast transaction log applied)")
 
     async def start(self, retries: int = 3) -> CommandResult:
-        """Démarre les conteneurs DDEV du projet avec retries automatique pour gérer les conflits Docker/ddev-router temporaires."""
+        """Démarre les conteneurs DDEV du projet avec retries automatique et nettoyage réseau pour gérer les conflits Docker/ddev-router temporaires."""
         import asyncio
         await self._log("info", "Démarrage des conteneurs DDEV...")
 
@@ -172,7 +172,11 @@ class DDEVManager:
                 return result
 
             err_lower = (result.stderr or "").lower() + (result.stdout or "").lower()
-            is_transient_docker_error = any(
+            is_subnet_error = (
+                "all predefined address pools have been fully subnetted" in err_lower
+                or "failed to create network" in err_lower
+            )
+            is_transient_docker_error = is_subnet_error or any(
                 kw in err_lower
                 for kw in [
                     "already in progress",
@@ -184,10 +188,17 @@ class DDEVManager:
             )
 
             if is_transient_docker_error and attempt < retries:
-                await self._log(
-                    "warning",
-                    f"Conflit Docker/ddev-router temporaire ({attempt}/{retries}). Nouvelle tentative dans 4s...",
-                )
+                if is_subnet_error:
+                    await self._log(
+                        "warning",
+                        f"Pool d'adresses IP Docker saturé ({attempt}/{retries}). Nettoyage automatique des réseaux Docker inutilisés (docker network prune)...",
+                    )
+                    await run_command("docker network prune -f", timeout=30)
+                else:
+                    await self._log(
+                        "warning",
+                        f"Conflit Docker/ddev-router temporaire ({attempt}/{retries}). Nouvelle tentative dans 4s...",
+                    )
                 await asyncio.sleep(4)
             else:
                 break
@@ -237,6 +248,7 @@ class DDEVManager:
 
         if result.success:
             await self._log("success", "Projet DDEV supprimé.")
+            await run_command("docker network prune -f", timeout=15)
         else:
             await self._log("error", f"Échec de la suppression : {result.stderr}")
 
