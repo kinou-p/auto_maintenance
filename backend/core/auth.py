@@ -37,13 +37,16 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Génère un token JWT signé."""
     to_encode = data.copy()
-    now = datetime.now(timezone.utc)
+    now_ts = int(datetime.now(timezone.utc).timestamp())
     if expires_delta:
-        expire = now + expires_delta
+        expire_ts = now_ts + int(expires_delta.total_seconds())
     else:
-        expire = now + timedelta(minutes=settings.jwt_access_token_expire_minutes)
+        expire_ts = now_ts + (settings.jwt_access_token_expire_minutes * 60)
 
-    to_encode.update({"exp": expire, "iat": now})
+    if "sub" in to_encode:
+        to_encode["sub"] = str(to_encode["sub"])
+
+    to_encode.update({"exp": expire_ts, "iat": now_ts})
     encoded_jwt = jwt.encode(
         to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm
     )
@@ -54,19 +57,22 @@ def decode_access_token(token: str) -> dict:
     """Décode et valide un token JWT. Lève une exception si invalide ou expiré."""
     try:
         payload = jwt.decode(
-            token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
+            token,
+            settings.jwt_secret_key,
+            algorithms=[settings.jwt_algorithm],
+            options={"verify_exp": True, "verify_iat": False},
         )
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Le token d'accès a expiré",
+            detail="Le token d'accès a expiré. Veuillez vous reconnecter.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except jwt.PyJWTError:
+    except jwt.PyJWTError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token d'authentification invalide",
+            detail=f"Token d'authentification invalide ({str(e)})",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
