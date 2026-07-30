@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
   getProjects,
@@ -20,10 +20,10 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { useConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Toaster, useToast } from '@/components/ui/Toaster';
+import { Header } from '@/components/ui/Header';
 import { cn } from '@/lib/utils';
 import type { Project, ProjectStatus } from '@/types';
 import {
-  Wrench,
   FolderOpen,
   Globe,
   Play,
@@ -31,7 +31,6 @@ import {
   Trash2,
   RefreshCw,
   Search,
-  LayoutGrid,
   CheckSquare,
   X,
   Plus,
@@ -41,7 +40,6 @@ import {
   Bell,
   ArrowRight,
   FileArchive,
-  Layers,
 } from 'lucide-react';
 
 const STATUS_CONFIG: Record<
@@ -271,88 +269,64 @@ export const Projects: React.FC = () => {
   const unreadNotifications = notifications.filter((n) => !n.read).length;
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
       {dialog}
       <Toaster toasts={toasts} dismiss={dismiss} />
 
-      {/* Header */}
-      <header className="border-b border-border px-4 md:px-6 py-3 shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Wrench className="h-6 w-6 text-primary" />
-            <Link to="/" className="text-xl font-bold hover:text-primary transition-colors">
-              Auto Maintenance
-            </Link>
-            <Badge variant="outline" className="text-xs hidden sm:block">
-              Projets
-            </Badge>
-          </div>
-
-          <div className="flex items-center gap-2 md:gap-4">
-            <Button variant="outline" size="sm" asChild className="h-8 text-xs px-2.5">
-              <Link to="/">
-                <LayoutGrid className="mr-1.5 h-3.5 w-3.5" />
-                <span>Tableau de bord</span>
-              </Link>
-            </Button>
-
-            <Button variant="outline" size="sm" asChild className="h-8 text-xs px-2.5">
-              <Link to="/containers">
-                <Layers className="mr-1.5 h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Containers</span>
-              </Link>
-            </Button>
-
+      <Header
+        activePage="projects"
+        rightActions={
+          <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
               onClick={handleGlobalReset}
               disabled={ddevLoading}
               title="Réinitialiser l'environnement DDEV (Global Power-off)"
-              className="h-8 text-xs px-2"
+              className="h-8 text-xs px-2.5 bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-300"
             >
-              <RotateCcw className={cn('mr-1.5 h-3.5 w-3.5', ddevLoading && 'animate-spin')} />
+              <RotateCcw className={cn('mr-1.5 h-3.5 w-3.5 text-cyan-400', ddevLoading && 'animate-spin')} />
               <span className="hidden sm:inline">Reset DDEV</span>
             </Button>
 
             {health && (
-              <div className="hidden md:flex items-center gap-3">
-                <div className="flex items-center gap-1 text-xs">
+              <div className="hidden lg:flex items-center gap-3 bg-slate-900/60 border border-slate-800 px-3 py-1 rounded-xl text-xs">
+                <div className="flex items-center gap-1.5 font-medium">
                   {health.docker ? (
-                    <Heart className="h-3.5 w-3.5 text-green-400" />
+                    <Heart className="h-3.5 w-3.5 text-emerald-400" />
                   ) : (
-                    <AlertCircle className="h-3.5 w-3.5 text-red-400" />
+                    <AlertCircle className="h-3.5 w-3.5 text-rose-400" />
                   )}
-                  Docker
+                  <span className="text-slate-300">Docker</span>
                 </div>
-                <div className="flex items-center gap-1 text-xs">
+                <div className="flex items-center gap-1.5 font-medium">
                   {health.ddev ? (
-                    <Heart className="h-3.5 w-3.5 text-green-400" />
+                    <Heart className="h-3.5 w-3.5 text-emerald-400" />
                   ) : (
-                    <AlertCircle className="h-3.5 w-3.5 text-red-400" />
+                    <AlertCircle className="h-3.5 w-3.5 text-rose-400" />
                   )}
-                  DDEV
+                  <span className="text-slate-300">DDEV</span>
                 </div>
               </div>
             )}
 
             <Button
               variant="outline"
-              size="icon"
+              size="sm"
               onClick={() => setShowNotificationModal(true)}
-              className="h-8 w-8 relative text-muted-foreground hover:text-foreground"
+              className="h-8 w-8 relative bg-slate-900 border-slate-800 text-slate-300 hover:text-white"
               title="Notifications"
             >
               <Bell className="h-4 w-4" />
               {unreadNotifications > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white shadow-xs animate-pulse">
+                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-white shadow-xs animate-pulse">
                   {unreadNotifications > 9 ? '9+' : unreadNotifications}
                 </span>
               )}
             </Button>
           </div>
-        </div>
-      </header>
+        }
+      />
 
       {/* Main Content */}
       <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto space-y-6 max-w-7xl mx-auto w-full">

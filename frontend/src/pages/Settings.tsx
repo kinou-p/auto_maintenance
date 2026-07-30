@@ -4,9 +4,7 @@ import type { SystemSettings } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Toaster, useToast } from '@/components/ui/Toaster';
-import { UserMenu } from '@/components/ui/UserMenu';
-import { ThemeToggle } from '@/components/ui/ThemeToggle';
-import { Link } from 'react-router-dom';
+import { Header } from '@/components/ui/Header';
 import {
   Sliders,
   Eye,
@@ -16,10 +14,7 @@ import {
   RotateCcw,
   Loader2,
   CheckCircle2,
-  Wrench,
-  Layers,
   ShieldCheck,
-  LayoutGrid,
 } from 'lucide-react';
 
 export const Settings: React.FC = () => {
@@ -91,49 +86,7 @@ export const Settings: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       <Toaster toasts={toasts} dismiss={dismiss} />
-
-      {/* Header Bar */}
-      <header className="sticky top-0 z-40 bg-slate-900/80 backdrop-blur-xl border-b border-slate-800 px-6 py-4 flex items-center justify-between shadow-xl">
-        <div className="flex items-center space-x-4">
-          <Link
-            to="/"
-            className="flex items-center space-x-3 text-slate-300 hover:text-white transition-colors"
-          >
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-              <Wrench className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <span className="font-bold text-lg text-slate-100 block leading-tight">Auto Maintenance</span>
-              <span className="text-xs text-slate-400">Plateforme de maintenance WordPress</span>
-            </div>
-          </Link>
-        </div>
-
-        <nav className="flex items-center space-x-6">
-          <Link
-            to="/"
-            className="text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors flex items-center gap-2"
-          >
-            <LayoutGrid className="w-4 h-4" />
-            Dashboard
-          </Link>
-          <Link
-            to="/containers"
-            className="text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors flex items-center gap-2"
-          >
-            <Layers className="w-4 h-4" />
-            Conteneurs
-          </Link>
-          <span className="text-sm font-medium text-emerald-400 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-            <Sliders className="w-4 h-4" />
-            Paramètres
-          </span>
-
-          <div className="h-5 w-px bg-slate-800" />
-          <ThemeToggle />
-          <UserMenu />
-        </nav>
-      </header>
+      <Header activePage="settings" />
 
       {/* Main Content */}
       <main className="flex-1 max-w-5xl w-full mx-auto p-6 md:p-8 space-y-8">

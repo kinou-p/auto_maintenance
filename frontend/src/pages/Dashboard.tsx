@@ -26,25 +26,22 @@ import { WorkflowProgress } from '@/components/dashboard/WorkflowProgress';
 import { QueueModal } from '@/components/dashboard/QueueModal';
 import { NotificationModal } from '@/components/dashboard/NotificationModal';
 import { ImageComparer } from '@/components/vrt/ImageComparer';
-import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { useConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Toaster, useToast } from '@/components/ui/Toaster';
+import { Header } from '@/components/ui/Header';
 
 import { cn } from '@/lib/utils';
-import { Link, useSearchParams } from 'react-router-dom';
-import { UserMenu } from '@/components/ui/UserMenu';
+import { useSearchParams } from 'react-router-dom';
 
 import {
   Play,
-
   Pause,
   Square,
   Wrench,
   RotateCcw,
-  LayoutGrid,
   Heart,
   AlertCircle,
   ChevronDown,
@@ -57,11 +54,9 @@ import {
   Hammer,
   Clock,
   RefreshCw,
-  Menu,
   MoreVertical,
   ImageOff,
   Bell,
-  FolderOpen,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
@@ -460,38 +455,25 @@ export function Dashboard() {
   const anyLoading = ddevLoading || workflowLoading;
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
       {dialog}
       <Toaster toasts={toasts} dismiss={dismiss} />
 
-      <header className="border-b border-border px-4 md:px-6 py-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="lg:hidden h-8 w-8"
-              onClick={toggleSidebar}
-            >
-              <Menu className="h-4 w-4" />
-            </Button>
-            <Wrench className="h-6 w-6 text-primary" />
-            <h1 className="text-xl font-bold hidden sm:block">Auto Maintenance</h1>
-            <Badge variant="outline" className="text-xs hidden sm:block">v1.0</Badge>
-          </div>
-
-          <div className="flex items-center gap-2 md:gap-4">
+      <Header
+        activePage="dashboard"
+        rightActions={
+          <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
               onClick={() => setShowQueueModal(true)}
-              className="h-8 text-xs px-2.5 text-amber-600 border-amber-500/30 hover:bg-amber-500/10 dark:text-amber-400"
+              className="h-8 text-xs px-2.5 bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20"
               title="Voir la file d'attente"
             >
               <Clock className="mr-1.5 h-3.5 w-3.5" />
               <span className="hidden sm:inline">File d'attente</span>
               {queueInfo && (queueInfo.total_active > 0 || queueInfo.total_pending > 0) && (
-                <Badge variant="secondary" className="ml-1.5 px-1.5 py-0 text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-300">
+                <Badge variant="secondary" className="ml-1.5 px-1.5 py-0 text-[10px] bg-amber-500/20 text-amber-300">
                   {queueInfo.total_active + queueInfo.total_pending}
                 </Badge>
               )}
@@ -500,94 +482,67 @@ export function Dashboard() {
             <Button
               variant="outline"
               size="sm"
-              asChild
-              className="h-8 text-xs px-2"
-            >
-              <Link to="/projects">
-                <FolderOpen className="mr-1.5 h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Projets</span>
-              </Link>
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              asChild
-              className="h-8 text-xs px-2"
-            >
-              <Link to="/containers">
-                <LayoutGrid className="mr-1.5 h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Containers</span>
-              </Link>
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
               onClick={handleGlobalReset}
               disabled={anyLoading}
               title="Réinitialiser l'environnement DDEV (Global Power-off)"
-              className="h-8 text-xs px-2"
+              className="h-8 text-xs px-2.5 bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-300"
             >
-              <RotateCcw className={cn("mr-1.5 h-3.5 w-3.5", anyLoading && "animate-spin")} />
+              <RotateCcw className={cn("mr-1.5 h-3.5 w-3.5 text-cyan-400", anyLoading && "animate-spin")} />
               <span className="hidden sm:inline">Reset DDEV</span>
             </Button>
 
             {currentProject && (
-              <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-muted/30 rounded-full border border-border/50">
+              <div className="hidden lg:flex items-center gap-2 px-3 py-1 bg-slate-900/60 rounded-xl border border-slate-800">
                 <div className={cn(
                   "h-2 w-2 rounded-full animate-pulse",
-                  ddevStatus === 'running' ? "bg-green-500" :
-                    ddevStatus === 'starting' ? "bg-blue-400" :
-                      ddevStatus === 'stopped' ? "bg-orange-500" : "bg-muted-foreground/30"
+                  ddevStatus === 'running' ? "bg-emerald-500" :
+                    ddevStatus === 'starting' ? "bg-cyan-400" :
+                      ddevStatus === 'stopped' ? "bg-amber-500" : "bg-slate-600"
                 )} />
-                <span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
+                <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-400">
                   DDEV: {ddevStatus}
                 </span>
               </div>
             )}
 
             {health && (
-              <div className="hidden md:flex items-center gap-3">
-                <div className="flex items-center gap-1 text-xs">
+              <div className="hidden lg:flex items-center gap-3 bg-slate-900/60 border border-slate-800 px-3 py-1 rounded-xl text-xs">
+                <div className="flex items-center gap-1.5 font-medium">
                   {health.docker ? (
-                    <Heart className="h-3.5 w-3.5 text-green-400" />
+                    <Heart className="h-3.5 w-3.5 text-emerald-400" />
                   ) : (
-                    <AlertCircle className="h-3.5 w-3.5 text-red-400" />
+                    <AlertCircle className="h-3.5 w-3.5 text-rose-400" />
                   )}
-                  Docker
+                  <span className="text-slate-300">Docker</span>
                 </div>
-                <div className="flex items-center gap-1 text-xs">
+                <div className="flex items-center gap-1.5 font-medium">
                   {health.ddev ? (
-                    <Heart className="h-3.5 w-3.5 text-green-400" />
+                    <Heart className="h-3.5 w-3.5 text-emerald-400" />
                   ) : (
-                    <AlertCircle className="h-3.5 w-3.5 text-red-400" />
+                    <AlertCircle className="h-3.5 w-3.5 text-rose-400" />
                   )}
-                  DDEV
+                  <span className="text-slate-300">DDEV</span>
                 </div>
               </div>
             )}
 
             <Button
               variant="outline"
-              size="icon"
+              size="sm"
               onClick={() => setShowNotificationModal(true)}
-              className="h-8 w-8 relative text-muted-foreground hover:text-foreground"
+              className="h-8 w-8 relative bg-slate-900 border-slate-800 text-slate-300 hover:text-white"
               title="Notifications"
             >
               <Bell className="h-4 w-4" />
               {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white shadow-xs animate-pulse">
+                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-white shadow-xs animate-pulse">
                   {unreadCount > 9 ? '9+' : unreadCount}
                 </span>
               )}
             </Button>
-
-            <ThemeToggle />
-            <UserMenu />
           </div>
-        </div>
-      </header>
+        }
+      />
 
 
       <div className="flex flex-1 overflow-hidden">
