@@ -127,7 +127,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   currentWorkflow: null,
-  setCurrentWorkflow: (workflow) => set({ currentWorkflow: workflow }),
+  setCurrentWorkflow: (workflow) =>
+    set((state) => {
+      let logs = state.logs;
+      if (workflow && workflow.logs && workflow.logs.length > 0) {
+        logs = workflow.logs;
+        const projectId = state.currentProject?.id;
+        if (projectId) {
+          storeProjectLogs(projectId, logs);
+        }
+      }
+      return { currentWorkflow: workflow, logs };
+    }),
 
   logs: [],
   addLog: (log) =>

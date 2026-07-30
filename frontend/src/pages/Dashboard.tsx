@@ -7,6 +7,7 @@ import {
   getVRTReport,
   checkHealth,
   getActiveWorkflow,
+  getProjectWorkflows,
   resetDDEVGlobal,
   startProject,
   pauseProject,
@@ -229,11 +230,20 @@ export function Dashboard() {
     window.addEventListener('app:queue_updated', handleStatusUpdate);
 
     getActiveWorkflow(currentProject.id)
-      .then((workflow) => {
+      .then(async (workflow) => {
         if (workflow) {
           setCurrentWorkflow(workflow);
         } else {
-          setCurrentWorkflow(null);
+          try {
+            const list = await getProjectWorkflows(currentProject.id);
+            if (list && list.length > 0 && list[0]) {
+              setCurrentWorkflow(list[0]);
+            } else {
+              setCurrentWorkflow(null);
+            }
+          } catch {
+            setCurrentWorkflow(null);
+          }
         }
       })
       .catch(() => {

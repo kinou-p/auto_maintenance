@@ -35,6 +35,7 @@ export interface Workflow {
   current_step: string | null;
   steps_completed: string[];
   steps_failed: string[];
+  logs?: LogMessage[];
   started_at: string | null;
   completed_at: string | null;
   error_message: string | null;
