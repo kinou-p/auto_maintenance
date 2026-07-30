@@ -5,7 +5,6 @@ import {
   startWorkflow,
   cancelWorkflow,
   getVRTReport,
-  checkHealth,
   getActiveWorkflow,
   getProjectWorkflows,
   resetDDEVGlobal,
@@ -43,8 +42,6 @@ import {
   Square,
   Wrench,
   RotateCcw,
-  Heart,
-  AlertCircle,
   ChevronDown,
   ChevronUp,
   CheckCircle2,
@@ -116,7 +113,6 @@ export function Dashboard() {
 
   const [vrtReport, setVrtReport] = useState<VRTReport | null>(null);
   const [vrtLoading, setVrtLoading] = useState(false);
-  const [health, setHealth] = useState<{ ddev: boolean; docker: boolean } | null>(null);
   const [ddevStatus, setDdevStatus] = useState<string>('unknown');
   const [logPanelHeight, setLogPanelHeight] = useState(256);
   const [showLogs, setShowLogs] = useState(true);
@@ -169,17 +165,6 @@ export function Dashboard() {
   }, []);
 
   useWebSocket(currentProject?.id);
-
-  useEffect(() => {
-    checkHealth()
-      .then((h) =>
-        setHealth({
-          ddev: h.checks.ddev_installed,
-          docker: h.checks.docker_running,
-        }),
-      )
-      .catch(() => setHealth(null));
-  }, []);
 
   const fetchVrtReport = useCallback(async () => {
     if (!currentProject) return;
@@ -452,8 +437,6 @@ export function Dashboard() {
     try {
       await resetDDEVGlobal();
       toast({ title: 'DDEV réinitialisé avec succès', variant: 'success' });
-      const h = await checkHealth();
-      setHealth({ ddev: h.checks.ddev_installed, docker: h.checks.docker_running });
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : 'Erreur inconnue';
       toast({ title: 'Erreur', description: errMsg, variant: 'destructive' });
@@ -515,26 +498,7 @@ export function Dashboard() {
               </div>
             )}
 
-            {health && (
-              <div className="hidden lg:flex items-center gap-3 bg-slate-900/60 border border-slate-800 px-3 py-1 rounded-xl text-xs">
-                <div className="flex items-center gap-1.5 font-medium">
-                  {health.docker ? (
-                    <Heart className="h-3.5 w-3.5 text-emerald-400" />
-                  ) : (
-                    <AlertCircle className="h-3.5 w-3.5 text-rose-400" />
-                  )}
-                  <span className="text-slate-300">Docker</span>
-                </div>
-                <div className="flex items-center gap-1.5 font-medium">
-                  {health.ddev ? (
-                    <Heart className="h-3.5 w-3.5 text-emerald-400" />
-                  ) : (
-                    <AlertCircle className="h-3.5 w-3.5 text-rose-400" />
-                  )}
-                  <span className="text-slate-300">DDEV</span>
-                </div>
-              </div>
-            )}
+
 
             <Button
               variant="outline"
