@@ -128,7 +128,7 @@ class BackupManager:
             return folders_to_purge_on_restore
 
         try:
-            archived_folders = await asyncio.to_thread(_archive_files)
+            archived_folders = _archive_files()
             await self._log(
                 "success",
                 f"✅ Sauvegarde complète (DB '{snapshot_name}' + {len(archived_folders)} répertoires de fichiers) créée avec succès.",
@@ -191,12 +191,27 @@ class BackupManager:
                 try:
                     with tarfile.open(backup.tar_path, "r:gz") as tar:
                         tar.extractall(path=tmp_dir)
+
+                    # Vérification stricte : tous les répertoires archivés doivent être présents dans l'archive extraite
+                    missing_folders = [
+                        rel_folder
+                        for rel_folder in backup.archived_folders
+                        if not (tmp_dir / rel_folder).exists()
+                    ]
+                    if missing_folders:
+                        shutil.rmtree(tmp_dir, ignore_errors=True)
+                        return (
+                            False,
+                            f"Archive de sauvegarde incomplète : dossiers attendus manquants ({', '.join(missing_folders)})",
+                            None,
+                        )
+
                     return True, None, tmp_dir
                 except Exception as e:
                     shutil.rmtree(tmp_dir, ignore_errors=True)
                     return False, f"Archive de sauvegarde corrompue ou illisible : {e}", None
 
-            valid_archive, extract_err, tmp_extract_dir = await asyncio.to_thread(_test_and_extract)
+            valid_archive, extract_err, tmp_extract_dir = _test_and_extract()
             if not valid_archive or not tmp_extract_dir:
                 err_msg = extract_err or "Impossible d'extraire l'archive de sauvegarde"
                 await self._log("error", f"❌ Abandon du rollback fichiers : {err_msg}", step="updates_apply")
@@ -207,7 +222,7 @@ class BackupManager:
                     error=err_msg,
                 )
 
-        # 2. Restauration MariaDB (après confirmation de la validité de l'archive)
+        # 2. Restauration MariaDB (après confirmation de la validité et complétude de l'archive)
         rest_db = await self.ddev.restore_snapshot(backup.snapshot_name)
         db_ok = rest_db.success
         if not db_ok:
@@ -246,7 +261,7 @@ class BackupManager:
                     shutil.rmtree(tmp_extract_dir, ignore_errors=True)
 
             try:
-                await asyncio.to_thread(_apply_clean_files)
+                _apply_clean_files()
                 files_ok = True
                 await self._log("success", "Fichiers WordPress intégralement restaurés depuis l'archive de sauvegarde.", step="updates_apply")
             except Exception as e:

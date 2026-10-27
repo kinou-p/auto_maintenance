@@ -396,6 +396,51 @@ def test_orchestrator_modular_architecture_and_exports():
     assert issubclass(PackageOrchestrator, WorkflowVisualStepsMixin)
 
 
+@pytest.mark.asyncio
+async def test_backup_manager_incomplete_archive_fails(tmp_path):
+    """Vérifie qu'une archive lisible mais incomplète (dossiers attendus manquants) est rejetée avant de toucher à la DB."""
+    import tarfile
+    from backend.managers.backup_manager import BackupManager, BackupResult
+    from backend.utils.command import CommandResult
+
+    mock_ddev = MagicMock()
+    mock_ddev.restore_snapshot = AsyncMock(return_value=CommandResult(returncode=0, stdout="ok", stderr="", command="ddev restore"))
+
+    # Préparer un dossier à archiver contenant seulement plugins
+    src_dir = tmp_path / "prep"
+    plugins_dir = src_dir / "wp-content" / "plugins"
+    plugins_dir.mkdir(parents=True)
+    (plugins_dir / "dummy.php").write_text("<?php // dummy", encoding="utf-8")
+
+    incomplete_tar = tmp_path / "incomplete.tar.gz"
+    with tarfile.open(incomplete_tar, "w:gz") as tar:
+        tar.add(plugins_dir, arcname="wp-content/plugins")
+
+    bm = BackupManager(
+        project_name="incomplete_proj",
+        project_dir=tmp_path,
+        ddev=mock_ddev,
+    )
+
+    # On annonce que plugins ET themes doivent être restaurés
+    incomplete_backup = BackupResult(
+        success=True,
+        snapshot_name="incomplete_snap",
+        tar_path=incomplete_tar,
+        archived_folders=["wp-content/plugins", "wp-content/themes"],
+    )
+
+    restore_res = await bm.restore_backup(incomplete_backup)
+    assert restore_res.success is False
+    assert restore_res.files_restored is False
+    assert restore_res.db_restored is False
+    # La DB ne doit surtout pas avoir été restaurée
+    assert not mock_ddev.restore_snapshot.called
+    assert "incomplète" in restore_res.error.lower()
+    assert "wp-content/themes" in restore_res.error
+
+
+
 
 
 
