@@ -49,7 +49,7 @@ async def list_updates(project_id: int) -> UpdatesListResponse:
 
 @router.post("/projects/{project_id}/updates/apply", response_model=UpdatesApplyResponse)
 async def apply_updates(project_id: int, request: UpdatesApplyRequest) -> UpdatesApplyResponse:
-    """Applique les mises à jour sélectionnées."""
+    """Applique les mises à jour sélectionnées avec snapshot préventif garanti."""
     async with async_session() as session:
         project = await session.get(Project, project_id)
         if not project:
@@ -58,17 +58,36 @@ async def apply_updates(project_id: int, request: UpdatesApplyRequest) -> Update
     ddev = DDEVManager(project.name)
     wp = WordPressManager(project.name, ddev)
 
-    results = await wp.apply_updates(
-        update_core=request.update_core,
-        plugin_names=request.plugin_names,
-        theme_names=request.theme_names,
-    )
+    # Création du snapshot préventif
+    snapshot_name = f"direct_apply_proj_{project_id}"
+    snap_res = await ddev.create_snapshot(snapshot_name)
+    if not snap_res.success:
+        raise HTTPException(
+            500,
+            f"Impossible de créer le snapshot MariaDB préventif avant mise à jour : {snap_res.stderr}",
+        )
+
+    try:
+        results = await wp.apply_updates(
+            update_core=request.update_core,
+            plugin_names=request.plugin_names,
+            theme_names=request.theme_names,
+        )
+    except Exception as e:
+        await ddev.restore_snapshot(snapshot_name)
+        raise HTTPException(500, f"Erreur critique lors de la mise à jour (snapshot restauré) : {e}")
+
+    total_success = sum(1 for r in results if r.success)
+    total_failed = sum(1 for r in results if not r.success)
+
+    if results and total_success == 0:
+        await ddev.restore_snapshot(snapshot_name)
 
     return UpdatesApplyResponse(
         project_id=project_id,
         results=results,
-        total_success=sum(1 for r in results if r.success),
-        total_failed=sum(1 for r in results if not r.success),
+        total_success=total_success,
+        total_failed=total_failed,
     )
 
 

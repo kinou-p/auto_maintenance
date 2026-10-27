@@ -137,8 +137,9 @@ class DDEVManager:
             "max_execution_time = 0\n"
             "max_input_time = 0\n"
             "max_input_vars = 10000\n"
+            "short_open_tag = On\n"
         )
-        await self._log("info", "Configuration PHP personnalisée appliquée (upload 2G, memory 2G)")
+        await self._log("info", "Configuration PHP personnalisée appliquée (upload 2G, memory 2G, short_open_tag On)")
 
     async def _write_mysql_config(self) -> None:
         """Écrit une configuration MariaDB ultra-rapide (désactivation fsync synchrone lors de la restauration)."""

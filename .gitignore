@@ -25,16 +25,18 @@ env/
 .env.local
 
 # Base de données
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 data/*.db
 data/*.db*
+test_*.png
 data/cache/
 data/scratch/
 
 # Données générées
-data/screenshots/
-data/reports/
-data/uploads/
-data/docker-projects/
+data/
 *.tsbuildinfo
 
 

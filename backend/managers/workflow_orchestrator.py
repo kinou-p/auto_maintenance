@@ -11,8 +11,10 @@ en cas d'échec.
 from __future__ import annotations
 
 import asyncio
+import tarfile
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from sqlalchemy import select
@@ -188,8 +190,8 @@ class WorkflowOrchestrator:
             self._docker = DockerEnvManager(project.name, self.logger)
             self._wp = WordPressManager(project.name, self._ddev, self.logger)
             self._hosts = HostsManager(self.logger)
-            self._screenshots = ScreenshotManager(project.name, self.logger)
-            self._vrt = VRTManager(project.name, self.logger)
+            self._screenshots = ScreenshotManager(project.name, self.logger, workflow_id=self.workflow_id)
+            self._vrt = VRTManager(project.name, self.logger, workflow_id=self.workflow_id)
 
 
             domain = project.domain
@@ -390,6 +392,12 @@ class WorkflowOrchestrator:
             # Libérer le navigateur Playwright
             if self._screenshots:
                 await self._screenshots.cleanup()
+            # Arrêter les conteneurs DDEV du projet pour libérer immédiatement la RAM (MariaDB, web, etc.)
+            if self._ddev:
+                try:
+                    await self._ddev.stop()
+                except Exception:
+                    pass
             _active_workflows.pop(self.workflow_id, None)
 
     # ── Étapes individuelles ──────────────────────────────────────
@@ -468,68 +476,61 @@ class WorkflowOrchestrator:
                 await session.commit()
 
     async def _step_screenshots(self, phase: str) -> None:
-        """Étape 6/9 : Capture des screenshots (non-bloquant)."""
+        """Étape 6/9 : Capture des screenshots."""
         assert self._wp is not None
         assert self._screenshots is not None
 
         step = f"screenshots_{phase}"
 
+        # Vérifier que le site est accessible avant de capturer
+        site_url = await self._wp.ddev.get_url()
+        import httpx
         try:
-            # Vérifier que le site est accessible avant de capturer
-            site_url = await self._wp.ddev.get_url()
-            import httpx
-            try:
-                async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
-                    response = await client.get(site_url)
-                    if response.status_code != 200:
+            async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
+                response = await client.get(site_url)
+                if response.status_code >= 400:
+                    await self.logger.warning(
+                        f"Le site répond avec le code {response.status_code}. "
+                        f"Les screenshots pourraient être incorrects.",
+                        step=step,
+                    )
+                else:
+                    body = response.text
+                    has_css = ('<link' in body and ('stylesheet' in body or '.css' in body)) or '<style' in body
+                    if not has_css:
                         await self.logger.warning(
-                            f"Le site répond avec le code {response.status_code}. "
-                            f"Les screenshots pourraient être incorrects.",
+                            "Aucune feuille de style CSS ou balise <style> détectée dans le HTML. "
+                            "Les screenshots risquent de montrer du HTML brut.",
                             step=step,
                         )
-                    else:
-                        body = response.text
-                        has_css = ('<link' in body and ('stylesheet' in body or '.css' in body)) or '<style' in body
-                        if not has_css:
-                            await self.logger.warning(
-                                "Aucune feuille de style CSS ou balise <style> détectée dans le HTML. "
-                                "Les screenshots risquent de montrer du HTML brut.",
-                                step=step,
-                            )
-            except Exception as e:
-                await self.logger.warning(
-                    f"Impossible de vérifier l'accessibilité du site : {e}",
-                    step=step,
-                )
-
-            pages = await self._wp.get_page_info()
-            if not pages:
-                await self.logger.warning(
-                    f"Aucune page trouvée pour les screenshots ({phase}).",
-                    step=step,
-                )
-                return
-
-            page_names = [p.get("name", "page") for p in pages]
-            await self.logger.info(
-                f"🔍 {len(pages)} page(s) détectée(s) pour la capture ({phase}) : {', '.join(page_names)}",
+        except Exception as e:
+            await self.logger.warning(
+                f"Impossible de vérifier l'accessibilité du site : {e}",
                 step=step,
             )
 
+        pages = await self._wp.get_page_info()
+        if not pages:
+            pages = [{"name": "home", "url": site_url, "title": "Accueil"}]
+
+        page_names = [p.get("name", "page") for p in pages]
+        await self.logger.info(
+            f"🔍 {len(pages)} page(s) détectée(s) pour la capture ({phase}) : {', '.join(page_names)}",
+            step=step,
+        )
+
+        try:
             results = await self._screenshots.capture_screenshots(pages, phase)
+            if not results:
+                raise StepError(f"Aucun screenshot capturé pour la phase '{phase}'.")
             await self.logger.info(
                 f"{len(results)} screenshot(s) capturé(s) ({phase}).",
                 step=step,
             )
-
+        except StepError:
+            raise
         except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            await self.logger.warning(
-                f"Screenshots ({phase}) ignorés (erreur non-bloquante) : {type(e).__name__}: {e}\n{tb[-800:]}",
-                step=step,
-            )
-            # Non-bloquant : on ne re-lève pas l'exception
+            raise StepError(f"Échec de la capture des screenshots ({phase}) : {e}")
 
 
     async def _step_updates_list(self) -> None:
@@ -562,14 +563,73 @@ class WorkflowOrchestrator:
         # Stocker pour l'étape suivante si pas de sélection manuelle
         self._available_updates = updates
 
+    async def _create_files_backup(self) -> Optional[Path]:
+        """Crée une archive tar.gz de wp-content/plugins et wp-content/themes avant mise à jour."""
+        if not self._wp or not getattr(self._wp, "project_dir", None):
+            return None
+
+        wp_content = self._wp.project_dir / "wp-content"
+        if not wp_content.exists():
+            return None
+
+        backup_dir = self._wp.project_dir / ".ddev" / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        tar_path = backup_dir / f"pre_updates_wf_{self.workflow_id}_files.tar.gz"
+
+        def _archive():
+            with tarfile.open(tar_path, "w:gz") as tar:
+                for folder in ["plugins", "themes"]:
+                    folder_path = wp_content / folder
+                    if folder_path.exists():
+                        tar.add(folder_path, arcname=f"wp-content/{folder}")
+            return tar_path
+
+        try:
+            await asyncio.to_thread(_archive)
+            await self.logger.info("📦 Archive préventive des plugins et thèmes créée avec succès.", step="updates_apply")
+            return tar_path
+        except Exception as e:
+            await self.logger.warning(f"Impossible de créer l'archive de sauvegarde des fichiers : {e}", step="updates_apply")
+            return None
+
+    async def _restore_files_backup(self, backup_path: Optional[Path]) -> bool:
+        """Restaure les dossiers wp-content/plugins et wp-content/themes depuis l'archive de sauvegarde."""
+        if not backup_path or not backup_path.exists() or not self._wp:
+            return False
+
+        def _extract():
+            with tarfile.open(backup_path, "r:gz") as tar:
+                tar.extractall(path=self._wp.project_dir)
+            return True
+
+        try:
+            await asyncio.to_thread(_extract)
+            return True
+        except Exception as e:
+            await self.logger.error(f"Échec de l'extraction de la sauvegarde des fichiers : {e}", step="updates_apply")
+            return False
+
+    async def _cleanup_files_backup(self, backup_path: Optional[Path]) -> None:
+        """Supprime l'archive temporaire de backup des fichiers."""
+        if backup_path and backup_path.exists():
+            try:
+                backup_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
     async def _step_updates_apply(self) -> None:
-        """Étape 8 : Application des mises à jour avec Snapshot MariaDB instantané."""
+        """Étape 8 : Application des mises à jour avec Snapshot MariaDB instantané et backup fichiers."""
         assert self._wp is not None
         assert self._ddev is not None
 
-        # 1. Créer un snapshot MariaDB pré-mises à jour en ~1s
+        # 1. Créer un snapshot MariaDB pré-mises à jour en ~1s et vérifier son succès
         snapshot_name = f"pre_updates_wf_{self.workflow_id}"
-        await self._ddev.create_snapshot(snapshot_name)
+        snap_res = await self._ddev.create_snapshot(snapshot_name)
+        if not snap_res.success:
+            raise StepError(f"Échec critique de création du snapshot MariaDB pré-mises à jour : {snap_res.stderr}")
+
+        # 2. Créer une sauvegarde préventive des fichiers PHP (plugins & thèmes)
+        files_backup = await self._create_files_backup()
 
         # Si des mises à jour ont été sélectionnées
         update_core = self.selected_updates.get("update_core", True)
@@ -587,6 +647,21 @@ class WorkflowOrchestrator:
             step="updates_apply",
         )
 
+        async def _do_rollback(reason: str):
+            await self.logger.error(
+                f"⚠️ Déclenchement du rollback complet (MariaDB + Fichiers) : {reason}",
+                step="updates_apply",
+            )
+            rest_db = await self._ddev.restore_snapshot(snapshot_name)
+            if not rest_db.success:
+                await self.logger.error(f"Échec de restauration du snapshot MariaDB : {rest_db.stderr}", step="updates_apply")
+            if files_backup:
+                rest_files = await self._restore_files_backup(files_backup)
+                if rest_files:
+                    await self.logger.success("Fichiers plugins/thèmes restaurés depuis la sauvegarde.", step="updates_apply")
+                else:
+                    await self.logger.error("Échec de restauration des fichiers plugins/thèmes.", step="updates_apply")
+
         try:
             results = await self._wp.apply_updates(
                 update_core=update_core,
@@ -594,11 +669,7 @@ class WorkflowOrchestrator:
                 theme_names=theme_names or [],
             )
         except Exception as e:
-            await self.logger.error(
-                f"⚠️ Échec critique des mises à jour : {e}. Restauration instantanée du snapshot MariaDB...",
-                step="updates_apply",
-            )
-            await self._ddev.restore_snapshot(snapshot_name)
+            await _do_rollback(f"Exception durant la mise à jour : {e}")
             raise
 
         total_success = sum(1 for r in results if r.success)
@@ -606,16 +677,16 @@ class WorkflowOrchestrator:
 
         # Si toutes les mises à jour ont échoué, rollback automatique
         if results and total_success == 0:
-            await self.logger.warning(
-                f"⚠️ 100% des mises à jour ont échoué. Restauration automatique du snapshot MariaDB...",
-                step="updates_apply",
-            )
-            await self._ddev.restore_snapshot(snapshot_name)
+            await _do_rollback("100% des mises à jour ont échoué.")
+            raise StepError("Toutes les mises à jour ont échoué. Rollback complet effectué.")
 
         await self.logger.info(
             f"✅ Application terminée : {total_success}/{len(results)} mise(s) à jour réussie(s) ({total_failed} échec(s)).",
             step="updates_apply",
         )
+
+        # Nettoyer l'archive de backup temporaire après succès
+        await self._cleanup_files_backup(files_backup)
 
         async with async_session() as session:
             project = await session.get(Project, self.project_id)
@@ -691,6 +762,13 @@ class WorkflowOrchestrator:
             "type": "vrt_report",
             "data": report,
         })
+
+        if total_p == 0:
+            raise StepError("Aucune comparaison VRT n'a pu être réalisée (captures introuvables ou incomplètes).")
+
+        fail_on_vrt = self.options.get("fail_on_vrt_regressions", True)
+        if failed_p > 0 and fail_on_vrt:
+            raise StepError(f"Régression(s) visuelle(s) critique(s) détectée(s) : {failed_p}/{total_p} test(s) visuel(s) en échec.")
 
 
     # ── Nettoyage ─────────────────────────────────────────────────

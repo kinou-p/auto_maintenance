@@ -13,6 +13,7 @@ Optimisations :
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 from typing import Optional
@@ -70,9 +71,11 @@ class ScreenshotManager:
         self,
         project_name: str,
         logger: Optional[WorkflowLogger] = None,
+        workflow_id: Optional[int] = None,
     ) -> None:
         self.project_name = project_name
         self.logger = logger
+        self.workflow_id = workflow_id
         # Instance Playwright/browser réutilisée
         self._playwright = None
         self._browser = None
@@ -82,7 +85,10 @@ class ScreenshotManager:
             await getattr(self.logger, level)(message, step=step)
 
     def _get_output_dir(self, phase: str, clean_old: bool = True) -> Path:
-        output_dir = settings.screenshots_dir / self.project_name / phase
+        if self.workflow_id is not None:
+            output_dir = settings.screenshots_dir / self.project_name / str(self.workflow_id) / phase
+        else:
+            output_dir = settings.screenshots_dir / self.project_name / phase
         output_dir.mkdir(parents=True, exist_ok=True)
         if clean_old:
             for f in output_dir.glob("*.png"):
@@ -114,7 +120,7 @@ class ScreenshotManager:
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
-                    "--host-resolver-rules=MAP *.ddev.site 172.17.0.1, MAP *.ddev.site:8443 172.17.0.1:8443",
+                    "--host-resolver-rules=MAP *.ddev.site 127.0.0.1, MAP *.ddev.site:8443 127.0.0.1:8443",
                 ],
             )
         return self._browser

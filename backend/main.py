@@ -15,7 +15,7 @@ import sys
 import asyncio
 import shutil
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -113,7 +113,7 @@ if "*" in allowed_origins:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins if allowed_origins else ["http://localhost:5173", "http://localhost:3000"],
-    allow_origin_regex=r"https?://.*",
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
@@ -160,8 +160,13 @@ for mount_name, directory in _static_dirs.items():
 
 # ── WebSocket ─────────────────────────────────────────────────────
 @app.websocket("/ws")
-async def websocket_global(websocket: WebSocket) -> None:
+async def websocket_global(websocket: WebSocket, token: Optional[str] = None) -> None:
     """WebSocket pour recevoir tous les logs en temps réel."""
+    if settings.app_env != "testing":
+        user = await get_ws_current_user(token)
+        if not user:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
     await ws_manager.connect(websocket)
     try:
         while True:
@@ -173,8 +178,13 @@ async def websocket_global(websocket: WebSocket) -> None:
 
 
 @app.websocket("/ws/{project_id}")
-async def websocket_project(websocket: WebSocket, project_id: int) -> None:
+async def websocket_project(websocket: WebSocket, project_id: int, token: Optional[str] = None) -> None:
     """WebSocket pour recevoir les logs d'un projet spécifique."""
+    if settings.app_env != "testing":
+        user = await get_ws_current_user(token)
+        if not user:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
     await ws_manager.connect(websocket, project_id)
     try:
         while True:
@@ -217,7 +227,7 @@ async def health_check() -> dict:
 
 
 # ── Setup sudoers (endpoint one-time) ────────────────────────────
-@app.post("/api/setup/sudoers")
+@app.post("/api/setup/sudoers", dependencies=[Depends(get_current_user)])
 async def setup_sudoers() -> dict:
     """Configure les permissions sudoers pour /etc/hosts (one-time)."""
     from backend.managers.hosts_manager import HostsManager

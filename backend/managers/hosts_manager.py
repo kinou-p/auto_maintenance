@@ -128,6 +128,11 @@ class HostsManager:
         """
         await self._log("info", f"Ajout de l'entrée DNS : {ip} → {domain}")
 
+        # Les domaines *.ddev.site résolvent nativement vers 127.0.0.1 via DNS wildcard
+        if domain.endswith(".ddev.site"):
+            await self._log("info", f"Le domaine {domain} résout nativement vers 127.0.0.1 via le DNS wildcard.")
+            return True
+
         try:
             content = self._read_hosts()
             entries = self._get_managed_entries(content)
@@ -157,6 +162,9 @@ class HostsManager:
             True si l'opération a réussi.
         """
         await self._log("info", f"Suppression de l'entrée DNS : {domain}")
+
+        if domain.endswith(".ddev.site"):
+            return True
 
         try:
             content = self._read_hosts()

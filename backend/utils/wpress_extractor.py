@@ -30,9 +30,9 @@ def extract_wpress_sync(
             if not hdr or len(hdr) < 4377:
                 break
 
-            fn = hdr[:255].rstrip(b"\x00").decode("utf-8", errors="ignore").strip()
-            sz_str = hdr[255:269].rstrip(b"\x00").decode("utf-8", errors="ignore").strip()
-            prefix = hdr[281:4377].rstrip(b"\x00").decode("utf-8", errors="ignore").strip()
+            fn = hdr[:255].split(b"\x00")[0].decode("utf-8", errors="ignore").strip().replace("\x00", "")
+            sz_str = hdr[255:269].split(b"\x00")[0].decode("utf-8", errors="ignore").strip().replace("\x00", "")
+            prefix = hdr[281:4377].split(b"\x00")[0].decode("utf-8", errors="ignore").strip().replace("\x00", "")
 
             if not sz_str.isdigit():
                 break
@@ -87,14 +87,14 @@ def extract_wpress_sync(
                 if sz > 0:
 
 
-                    out_file.parent.mkdir(parents=True, exist_ok=True)
-                    if out_file.exists():
-                        try:
-                            os.chmod(out_file, 0o666)
-                            out_file.unlink(missing_ok=True)
-                        except Exception:
-                            pass
                     try:
+                        out_file.parent.mkdir(parents=True, exist_ok=True)
+                        if out_file.exists():
+                            try:
+                                os.chmod(out_file, 0o666)
+                                out_file.unlink(missing_ok=True)
+                            except Exception:
+                                pass
                         with open(out_file, "wb") as out_f:
                             chunk_size = 2 * 1024 * 1024  # 2 MB buffer
                             remaining = sz
@@ -105,8 +105,7 @@ def extract_wpress_sync(
                                 out_f.write(chunk)
                                 remaining -= len(chunk)
                         pos += sz
-                    except PermissionError:
-                        # Si le fichier est verrouillé par un processus Windows, sauter sa réécriture
+                    except Exception:
                         f.seek(sz, 1)
                         pos += sz
                 else:

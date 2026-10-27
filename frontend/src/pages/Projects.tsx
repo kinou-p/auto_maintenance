@@ -37,7 +37,56 @@ import {
   Bell,
   ArrowRight,
   FileArchive,
+  ExternalLink,
+  SlidersHorizontal,
 } from 'lucide-react';
+
+/**
+ * Extrait le domaine de production réel et l'URL wp-admin depuis le nom ou le domaine du projet.
+ * Ex: 'www-lacentralesolaire-fr-20261011-190551-yjjw55xwpc5r' -> 'https://www.lacentralesolaire.fr'
+ */
+function getProductionSiteUrls(project: Project) {
+  // 1. Extraire le préfixe sans le suffixe timestamp/hash
+  let base = project.name;
+  const match = project.name.match(/^(.+?)-202\d{5}-\d{6}-[a-z0-9]+$/i) ||
+                project.name.match(/^(.+?)-202\d{5}-\d{6}-\d+$/i);
+  if (match && match[1]) {
+    base = match[1];
+  } else if (project.domain.includes('.ddev.site')) {
+    base = project.domain.replace('.ddev.site', '');
+  }
+
+  // 2. Transformer le TLD final (-fr, -com, -org, etc.) en point
+  base = base.replace(/-(fr|com|org|net|eu|io|be|ch|info|biz)$/i, '.$1');
+
+  // Cas particuliers de sous-domaines (ex: plui-beauvaisis.fr -> plui.beauvaisis.fr)
+  if (base.startsWith('plui-')) {
+    base = 'plui.' + base.substring(5);
+  }
+
+  // 3. Remplacer www- initial par www.
+  if (base.startsWith('www-')) {
+    base = 'www.' + base.substring(4);
+  }
+
+  // 4. Si la chaîne ressemble à un domaine valide
+  if (base.includes('.')) {
+    const siteUrl = `https://${base}`;
+    return {
+      domainDisplay: base,
+      siteUrl,
+      adminUrl: `${siteUrl}/wp-admin/`,
+    };
+  }
+
+  // Fallback si non déterminable
+  return {
+    domainDisplay: project.domain,
+    siteUrl: `http://${project.domain}`,
+    adminUrl: `http://${project.domain}/wp-admin/`,
+  };
+}
+
 
 const STATUS_CONFIG: Record<
   ProjectStatus,
@@ -475,6 +524,7 @@ export const Projects: React.FC = () => {
               const isChecked = selectedProjects.has(project.id);
               const isLoadingAction = actionLoading?.projectId === project.id;
               const isDeleting = project.status === 'deleting';
+              const prodUrls = getProductionSiteUrls(project);
 
               return (
                 <Card
@@ -506,15 +556,47 @@ export const Projects: React.FC = () => {
                       </Badge>
                     </div>
 
-                    <a
-                      href={`http://${project.domain}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1.5 mt-1 transition-colors truncate"
-                    >
-                      <Globe className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">{project.domain}</span>
-                    </a>
+                    {/* Liens DDEV local & Production */}
+                    <div className="mt-2 space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <a
+                          href={`http://${project.domain}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-muted-foreground hover:text-primary flex items-center gap-1.5 transition-colors truncate max-w-[200px]"
+                          title={`Local DDEV: http://${project.domain}`}
+                        >
+                          <Globe className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                          <span className="truncate">{project.domain}</span>
+                        </a>
+                      </div>
+
+                      {/* Bouton direct vers le vrai site / Admin Prod */}
+                      <div className="pt-1 flex items-center gap-1.5 flex-wrap">
+                        <a
+                          href={prodUrls.adminUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[11px] font-medium transition-colors"
+                          title={`Ouvrir le tableau de bord WordPress Prod : ${prodUrls.adminUrl}`}
+                        >
+                          <SlidersHorizontal className="h-3 w-3" />
+                          <span>Admin Prod</span>
+                          <ExternalLink className="h-2.5 w-2.5 opacity-70" />
+                        </a>
+
+                        <a
+                          href={prodUrls.siteUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground border border-border/40 text-[11px] font-medium transition-colors"
+                          title={`Visiter le vrai site en ligne : ${prodUrls.siteUrl}`}
+                        >
+                          <span>Site en ligne</span>
+                          <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+                        </a>
+                      </div>
+                    </div>
                   </CardHeader>
 
                   <CardContent className="pt-0 pb-4 flex-1">

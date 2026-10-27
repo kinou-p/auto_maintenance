@@ -67,9 +67,13 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_jwt_secret(cls, v, info) -> str:
         insecure_default = "auto_maintenance_super_secret_jwt_key_2026_change_me!"
-        if not v or not str(v).strip():
-            return insecure_default
-        return str(v)
+        val = str(v).strip() if v else ""
+        import os
+        if not val or val == insecure_default:
+            if os.getenv("APP_ENV") == "production":
+                raise ValueError("En environnement de production, 'JWT_SECRET_KEY' doit impérativement être configurée avec une clé secrète forte.")
+            return val or insecure_default
+        return val
 
     # --- Database ---
     database_url: str = Field(
@@ -130,7 +134,8 @@ class Settings(BaseSettings):
 
 
     # --- VRT ---
-    vrt_threshold: float = 0.1
+    vrt_threshold: float = 5.0
+    vrt_min_ssim_score: float = 0.95
     vrt_anti_aliasing_tolerance: int = 2
     vrt_diff_color_r: int = 255
     vrt_diff_color_g: int = 0

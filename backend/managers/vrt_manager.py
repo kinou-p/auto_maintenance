@@ -49,9 +49,11 @@ class VRTManager:
         self,
         project_name: str,
         logger: Optional[WorkflowLogger] = None,
+        workflow_id: Optional[int] = None,
     ) -> None:
         self.project_name = project_name
         self.logger = logger
+        self.workflow_id = workflow_id
         self.threshold = settings.vrt_threshold  # % seuil de diff par défaut
         self.min_ssim = getattr(settings, "vrt_min_ssim_score", 0.95)
         self.aa_tolerance = settings.vrt_anti_aliasing_tolerance
@@ -87,9 +89,14 @@ class VRTManager:
         await self._load_db_settings()
         await self._log("info", f"Démarrage de la comparaison visuelle (SSIM min: {self.min_ssim}, Diff max: {self.threshold}%)...")
 
-        before_dir = settings.screenshots_dir / self.project_name / "before"
-        after_dir = settings.screenshots_dir / self.project_name / "after"
-        diff_dir = settings.screenshots_dir / self.project_name / "diff"
+        base_dir = (
+            settings.screenshots_dir / self.project_name / str(self.workflow_id)
+            if self.workflow_id is not None
+            else settings.screenshots_dir / self.project_name
+        )
+        before_dir = base_dir / "before"
+        after_dir = base_dir / "after"
+        diff_dir = base_dir / "diff"
         diff_dir.mkdir(parents=True, exist_ok=True)
 
         if not before_dir.exists():

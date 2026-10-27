@@ -13,7 +13,9 @@ describe('cn utility', () => {
   });
 
   it('handles conditional class names', () => {
-    const result = cn('base-class', false && 'hidden', true && 'block');
+    const isHidden = false;
+    const isBlock = true;
+    const result = cn('base-class', isHidden && 'hidden', isBlock && 'block');
     expect(result).toBe('base-class block');
   });
 });

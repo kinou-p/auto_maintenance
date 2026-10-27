@@ -61,6 +61,7 @@ async def run_command(
     last_result: Optional[CommandResult] = None
 
     for attempt in range(retries + 1):
+        proc = None
         try:
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -174,6 +175,12 @@ async def run_command(
             await asyncio.sleep(retry_delay * (attempt + 1))
 
         except asyncio.TimeoutError:
+            if proc is not None:
+                try:
+                    proc.kill()
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                except Exception:
+                    pass
             if attempt >= retries:
                 return CommandResult(
                     returncode=-1,
