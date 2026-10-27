@@ -11,6 +11,7 @@ Gère de façon unifiée et sécurisée :
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
@@ -19,6 +20,10 @@ from typing import Optional
 
 from backend.core.websocket import WorkflowLogger
 from backend.managers.ddev_manager import DDEVManager
+
+# Pool de threads dédié aux opérations I/O d'archivage et restauration de fichiers
+# Évite de saturer ou bloquer l'Event Loop asyncio principale de FastAPI lors du traitement de gros volumes
+_backup_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="backup_io")
 
 
 @dataclass
@@ -128,7 +133,8 @@ class BackupManager:
             return folders_to_purge_on_restore
 
         try:
-            archived_folders = _archive_files()
+            loop = asyncio.get_running_loop()
+            archived_folders = await loop.run_in_executor(_backup_executor, _archive_files)
             await self._log(
                 "success",
                 f"✅ Sauvegarde complète (DB '{snapshot_name}' + {len(archived_folders)} répertoires de fichiers) créée avec succès.",
@@ -211,7 +217,8 @@ class BackupManager:
                     shutil.rmtree(tmp_dir, ignore_errors=True)
                     return False, f"Archive de sauvegarde corrompue ou illisible : {e}", None
 
-            valid_archive, extract_err, tmp_extract_dir = _test_and_extract()
+            loop = asyncio.get_running_loop()
+            valid_archive, extract_err, tmp_extract_dir = await loop.run_in_executor(_backup_executor, _test_and_extract)
             if not valid_archive or not tmp_extract_dir:
                 err_msg = extract_err or "Impossible d'extraire l'archive de sauvegarde"
                 await self._log("error", f"❌ Abandon du rollback fichiers : {err_msg}", step="updates_apply")
@@ -261,7 +268,8 @@ class BackupManager:
                     shutil.rmtree(tmp_extract_dir, ignore_errors=True)
 
             try:
-                _apply_clean_files()
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(_backup_executor, _apply_clean_files)
                 files_ok = True
                 await self._log("success", "Fichiers WordPress intégralement restaurés depuis l'archive de sauvegarde.", step="updates_apply")
             except Exception as e:

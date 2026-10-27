@@ -107,15 +107,40 @@ class WorkflowUpdatesStepsMixin:
         total_success = sum(1 for r in results if r.success)
         total_failed = sum(1 for r in results if not r.success)
 
+        # Journaliser explicitement les composants dont la mise à jour a échoué
+        failed_updates = [r for r in results if not r.success]
+        for fu in failed_updates:
+            await self.logger.warning(
+                f"⚠️ Échec de mise à jour pour '{fu.name}' ({fu.type}) : {fu.message or 'erreur'}",
+                step="updates_apply",
+            )
+
         # Si toutes les mises à jour ont échoué, rollback automatique
         if results and total_success == 0:
             await _do_rollback("100% des mises à jour ont échoué.")
             raise StepError("Toutes les mises à jour ont échoué. Rollback complet effectué.")
 
-        await self.logger.info(
-            f"✅ Application terminée : {total_success}/{len(results)} mise(s) à jour réussie(s) ({total_failed} échec(s)).",
-            step="updates_apply",
+        # Si l'option stricte fail_on_update_errors est demandée
+        fail_on_update_errors = (
+            self.options.get("fail_on_update_errors", False)
+            or self.selected_updates.get("fail_on_update_errors", False)
         )
+        if total_failed > 0 and fail_on_update_errors:
+            await _do_rollback(f"{total_failed} mise(s) à jour en échec (mode strict actif).")
+            raise StepError(
+                f"Échec de mise à jour partiel ({total_failed}/{len(results)} en échec) sous politique stricte. Rollback effectué."
+            )
+
+        if total_failed > 0:
+            await self.logger.warning(
+                f"⚠️ Mises à jour partielles : {total_success}/{len(results)} réussie(s), {total_failed} en échec.",
+                step="updates_apply",
+            )
+        else:
+            await self.logger.success(
+                f"✅ Application terminée : {total_success}/{len(results)} mise(s) à jour réussie(s).",
+                step="updates_apply",
+            )
 
         # Nettoyer l'archive de backup temporaire après succès
         await backup_mgr.cleanup_backup(backup_res)
@@ -130,6 +155,9 @@ class WorkflowUpdatesStepsMixin:
         await ws_manager.send_to_project(self.project_id, {
             "type": "updates_results",
             "data": [r.model_dump() for r in results],
+            "total_success": total_success,
+            "total_failed": total_failed,
+            "has_failures": total_failed > 0,
         })
 
         # Sauvegarder les stats dans le workflow

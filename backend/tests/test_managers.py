@@ -440,6 +440,54 @@ async def test_backup_manager_incomplete_archive_fails(tmp_path):
     assert "wp-content/themes" in restore_res.error
 
 
+@pytest.mark.asyncio
+async def test_workflow_updates_partial_failures_strict_and_lenient(tmp_path):
+    """Vérifie le comportement de _step_updates_apply en cas d'échecs partiels (mode strict vs permissif)."""
+    from backend.managers.orchestrator import WorkflowOrchestrator, StepError
+    from backend.models.schemas import UpdateResult
+    from backend.managers.backup_manager import BackupResult
+
+    orch = WorkflowOrchestrator(
+        project_id=1,
+        workflow_id=10,
+        options={"fail_on_update_errors": True},
+    )
+    orch.project_name = "test_updates_proj"
+
+    # Mock WP et DDEV
+    mock_wp = MagicMock()
+    mock_wp.project_dir = tmp_path
+    mock_wp.apply_updates = AsyncMock(return_value=[
+        UpdateResult(name="plugin-ok", type="plugin", success=True, old_version="1.0", new_version="1.1", message="Updated"),
+        UpdateResult(name="plugin-fail", type="plugin", success=False, old_version="2.0", new_version="2.1", message="Incompatible PHP"),
+    ])
+    orch._wp = mock_wp
+
+    mock_ddev = MagicMock()
+    orch._ddev = mock_ddev
+
+    # Mocker BackupManager
+    with patch("backend.managers.orchestrator.steps_updates.BackupManager") as MockBM:
+        instance = MockBM.return_value
+        instance.create_backup = AsyncMock(return_value=BackupResult(success=True, snapshot_name="snap_1"))
+        instance.restore_backup = AsyncMock(return_value=MagicMock(success=True))
+        instance.cleanup_backup = AsyncMock()
+
+        # En mode strict -> doit lever StepError et appeler restore_backup (rollback)
+        with pytest.raises(StepError, match="stricte"):
+            await orch._step_updates_apply()
+        assert instance.restore_backup.called
+
+        # En mode non strict -> ne lève pas d'exception et nettoie le backup
+        orch.options = {"fail_on_update_errors": False}
+        orch.selected_updates = {}
+        instance.restore_backup.reset_mock()
+        await orch._step_updates_apply()
+        assert not instance.restore_backup.called
+        assert instance.cleanup_backup.called
+
+
+
 
 
 
