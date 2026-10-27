@@ -99,30 +99,25 @@ class VRTManager:
         diff_dir = base_dir / "diff"
         diff_dir.mkdir(parents=True, exist_ok=True)
 
-        if not before_dir.exists():
-            await self._log("error", "Répertoire 'before' introuvable.")
-            return {"error": "Répertoire before manquant", "items": []}
+        wf_segment = f"{self.workflow_id}/" if self.workflow_id is not None else ""
 
-        if not after_dir.exists():
-            await self._log("error", "Répertoire 'after' introuvable.")
-            return {"error": "Répertoire after manquant", "items": []}
-
-        # Trouver les paires de screenshots
-        before_files = {f.name: f for f in before_dir.glob("*.png")}
-        after_files = {f.name: f for f in after_dir.glob("*.png")}
+        before_files = {f.name: f for f in before_dir.glob("*.png")} if before_dir.exists() else {}
+        after_files = {f.name: f for f in after_dir.glob("*.png")} if after_dir.exists() else {}
 
         common_files = set(before_files.keys()) & set(after_files.keys())
+        missing_in_after = set(before_files.keys()) - set(after_files.keys())
+        missing_in_before = set(after_files.keys()) - set(before_files.keys())
 
-        if not common_files:
-            await self._log("warning", "Aucune paire de screenshots trouvée.")
-            return {"items": [], "total_pages": 0, "total_passed": 0, "total_failed": 0}
+        if not before_files and not after_files:
+            await self._log("warning", "Aucun screenshot trouvé.")
+            return {"items": [], "total_pages": 0, "total_passed": 0, "total_failed": 0, "error": "Aucun screenshot trouvé."}
 
         results: list[dict] = []
 
         async def compare_single(i: int, filename: str) -> dict:
             await self._log("info", f"Comparaison [{i+1}/{len(common_files)}] : {filename}")
             if self.logger:
-                progress = ((i + 1) / len(common_files)) * 100
+                progress = ((i + 1) / max(len(common_files), 1)) * 100
                 await self.logger.progress("vrt_compare", progress, f"Comparaison : {filename}")
 
             # Vérifier la présence des DOM Snapshots correspondants
@@ -147,9 +142,9 @@ class VRTManager:
             page_name = parts[0] if len(parts) > 1 else filename
             device = parts[1] if len(parts) > 1 else "unknown"
 
-            rel_before = f"/static/data/screenshots/{self.project_name}/before/{filename}"
-            rel_after = f"/static/data/screenshots/{self.project_name}/after/{filename}"
-            rel_diff = f"/static/data/screenshots/{self.project_name}/diff/diff_{filename}"
+            rel_before = f"/static/data/screenshots/{self.project_name}/{wf_segment}before/{filename}"
+            rel_after = f"/static/data/screenshots/{self.project_name}/{wf_segment}after/{filename}"
+            rel_diff = f"/static/data/screenshots/{self.project_name}/{wf_segment}diff/diff_{filename}"
 
             result.update({
                 "page_name": page_name,
@@ -161,9 +156,62 @@ class VRTManager:
             })
             return result
 
+        if common_files:
+            tasks = [compare_single(i, fn) for i, fn in enumerate(sorted(common_files))]
+            compared_results = await asyncio.gather(*tasks)
+            results.extend(compared_results)
 
-        tasks = [compare_single(i, fn) for i, fn in enumerate(sorted(common_files))]
-        results = await asyncio.gather(*tasks)
+        # Gérer les captures manquantes après mise à jour (crash ou page 500)
+        for filename in sorted(missing_in_after):
+            parts = filename.replace(".png", "").rsplit("_", 1)
+            page_name = parts[0] if len(parts) > 1 else filename
+            device = parts[1] if len(parts) > 1 else "unknown"
+            rel_before = f"/static/data/screenshots/{self.project_name}/{wf_segment}before/{filename}"
+            await self._log(
+                "error",
+                f"❌ Capture post-mise à jour manquante : {filename} (page '{page_name}' sur {device})",
+            )
+            results.append({
+                "page_name": page_name,
+                "device": device,
+                "before_path": rel_before,
+                "after_path": None,
+                "diff_image": None,
+                "diff_percentage": 100.0,
+                "diff_pixels": 0,
+                "total_pixels": 0,
+                "ssim_score": 0.0,
+                "passed": False,
+                "verdict": "FAIL - Capture post-mise à jour manquante (erreur ou crash)",
+                "dom_similarity": None,
+                "error": "Capture post-mise à jour manquante ou page inaccessible",
+            })
+
+        # Gérer les captures manquantes avant mise à jour
+        for filename in sorted(missing_in_before):
+            parts = filename.replace(".png", "").rsplit("_", 1)
+            page_name = parts[0] if len(parts) > 1 else filename
+            device = parts[1] if len(parts) > 1 else "unknown"
+            rel_after = f"/static/data/screenshots/{self.project_name}/{wf_segment}after/{filename}"
+            await self._log(
+                "error",
+                f"❌ Capture pré-mise à jour manquante : {filename} (page '{page_name}' sur {device})",
+            )
+            results.append({
+                "page_name": page_name,
+                "device": device,
+                "before_path": None,
+                "after_path": rel_after,
+                "diff_image": None,
+                "diff_percentage": 100.0,
+                "diff_pixels": 0,
+                "total_pixels": 0,
+                "ssim_score": 0.0,
+                "passed": False,
+                "verdict": "FAIL - Capture pré-mise à jour manquante",
+                "dom_similarity": None,
+                "error": "Capture pré-mise à jour manquante",
+            })
 
         # Calcul des totaux
         total_passed = sum(1 for r in results if r.get("passed", False))
@@ -171,6 +219,7 @@ class VRTManager:
 
         report = {
             "project_name": self.project_name,
+            "workflow_id": self.workflow_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "total_pages": len(results),
             "total_passed": total_passed,
@@ -179,10 +228,14 @@ class VRTManager:
             "items": results,
         }
 
-        # Sauvegarder le rapport JSON
+        # Sauvegarder le rapport JSON (spécifique au workflow si présent, et latest global)
+        settings.reports_dir.mkdir(parents=True, exist_ok=True)
+        report_json = json.dumps(report, indent=2, ensure_ascii=False, default=str)
+        if self.workflow_id is not None:
+            wf_report_path = settings.reports_dir / f"{self.project_name}_wf_{self.workflow_id}_vrt_report.json"
+            wf_report_path.write_text(report_json, encoding="utf-8")
         report_path = settings.reports_dir / f"{self.project_name}_vrt_report.json"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+        report_path.write_text(report_json, encoding="utf-8")
         await self._log("success", f"Rapport VRT sauvegardé : {report_path}")
 
         summary_level = "success" if total_failed == 0 else "warning"

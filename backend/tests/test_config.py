@@ -38,3 +38,23 @@ def test_expand_path_validator():
     custom_settings = Settings(ddev_projects_dir="/tmp/test_dir")
     assert isinstance(custom_settings.ddev_projects_dir, Path)
     assert custom_settings.ddev_projects_dir == Path("/tmp/test_dir")
+
+
+def test_jwt_secret_in_production():
+    """Vérifie le rejet de la clé JWT par défaut ou vide en production."""
+    with pytest.raises(ValueError, match="JWT_SECRET_KEY"):
+        Settings(app_env="production")
+
+    with pytest.raises(ValueError, match="JWT_SECRET_KEY"):
+        Settings(app_env="production", jwt_secret_key="auto_maintenance_super_secret_jwt_key_2026_change_me!")
+
+    with pytest.raises(ValueError, match="JWT_SECRET_KEY"):
+        Settings(app_env="production", jwt_secret_key="   ")
+
+    # Clé forte valide
+    valid_settings = Settings(
+        app_env="production",
+        jwt_secret_key="a_very_strong_custom_production_secret_key_123456"
+    )
+    assert valid_settings.jwt_secret_key == "a_very_strong_custom_production_secret_key_123456"
+

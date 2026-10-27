@@ -21,6 +21,7 @@ from sqlalchemy import select
 
 from backend.core.config import settings
 from backend.core.websocket import WorkflowLogger, ws_manager
+from backend.managers.backup_manager import BackupManager, BackupResult
 from backend.managers.ddev_manager import DDEVManager
 from backend.managers.docker_env_manager import DockerEnvManager
 from backend.managers.hosts_manager import HostsManager
@@ -563,73 +564,10 @@ class WorkflowOrchestrator:
         # Stocker pour l'étape suivante si pas de sélection manuelle
         self._available_updates = updates
 
-    async def _create_files_backup(self) -> Optional[Path]:
-        """Crée une archive tar.gz de wp-content/plugins et wp-content/themes avant mise à jour."""
-        if not self._wp or not getattr(self._wp, "project_dir", None):
-            return None
-
-        wp_content = self._wp.project_dir / "wp-content"
-        if not wp_content.exists():
-            return None
-
-        backup_dir = self._wp.project_dir / ".ddev" / "backups"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        tar_path = backup_dir / f"pre_updates_wf_{self.workflow_id}_files.tar.gz"
-
-        def _archive():
-            with tarfile.open(tar_path, "w:gz") as tar:
-                for folder in ["plugins", "themes"]:
-                    folder_path = wp_content / folder
-                    if folder_path.exists():
-                        tar.add(folder_path, arcname=f"wp-content/{folder}")
-            return tar_path
-
-        try:
-            await asyncio.to_thread(_archive)
-            await self.logger.info("📦 Archive préventive des plugins et thèmes créée avec succès.", step="updates_apply")
-            return tar_path
-        except Exception as e:
-            await self.logger.warning(f"Impossible de créer l'archive de sauvegarde des fichiers : {e}", step="updates_apply")
-            return None
-
-    async def _restore_files_backup(self, backup_path: Optional[Path]) -> bool:
-        """Restaure les dossiers wp-content/plugins et wp-content/themes depuis l'archive de sauvegarde."""
-        if not backup_path or not backup_path.exists() or not self._wp:
-            return False
-
-        def _extract():
-            with tarfile.open(backup_path, "r:gz") as tar:
-                tar.extractall(path=self._wp.project_dir)
-            return True
-
-        try:
-            await asyncio.to_thread(_extract)
-            return True
-        except Exception as e:
-            await self.logger.error(f"Échec de l'extraction de la sauvegarde des fichiers : {e}", step="updates_apply")
-            return False
-
-    async def _cleanup_files_backup(self, backup_path: Optional[Path]) -> None:
-        """Supprime l'archive temporaire de backup des fichiers."""
-        if backup_path and backup_path.exists():
-            try:
-                backup_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-
     async def _step_updates_apply(self) -> None:
-        """Étape 8 : Application des mises à jour avec Snapshot MariaDB instantané et backup fichiers."""
+        """Étape 8 : Application des mises à jour avec Snapshot MariaDB instantané et backup complet des fichiers."""
         assert self._wp is not None
         assert self._ddev is not None
-
-        # 1. Créer un snapshot MariaDB pré-mises à jour en ~1s et vérifier son succès
-        snapshot_name = f"pre_updates_wf_{self.workflow_id}"
-        snap_res = await self._ddev.create_snapshot(snapshot_name)
-        if not snap_res.success:
-            raise StepError(f"Échec critique de création du snapshot MariaDB pré-mises à jour : {snap_res.stderr}")
-
-        # 2. Créer une sauvegarde préventive des fichiers PHP (plugins & thèmes)
-        files_backup = await self._create_files_backup()
 
         # Si des mises à jour ont été sélectionnées
         update_core = self.selected_updates.get("update_core", True)
@@ -642,6 +580,19 @@ class WorkflowOrchestrator:
         if theme_names is None and hasattr(self, "_available_updates"):
             theme_names = [t.name for t in self._available_updates.get("themes", [])]
 
+        # Sauvegarde préventive complète (DB + Fichiers) via BackupManager
+        snapshot_name = f"pre_updates_wf_{self.workflow_id}"
+        backup_mgr = BackupManager(
+            project_name=self.project_name,
+            project_dir=self._wp.project_dir,
+            ddev=self._ddev,
+            logger=self.logger,
+            workflow_id=self.workflow_id,
+        )
+        backup_res = await backup_mgr.create_backup(snapshot_name, backup_core=update_core)
+        if not backup_res.success:
+            raise StepError(f"Échec critique de la sauvegarde préventive avant mises à jour : {backup_res.error}")
+
         await self.logger.info(
             f"⚙️ Application des mises à jour en cours... (Core: {update_core}, Plugins: {len(plugin_names or [])}, Thèmes: {len(theme_names or [])})",
             step="updates_apply",
@@ -652,15 +603,14 @@ class WorkflowOrchestrator:
                 f"⚠️ Déclenchement du rollback complet (MariaDB + Fichiers) : {reason}",
                 step="updates_apply",
             )
-            rest_db = await self._ddev.restore_snapshot(snapshot_name)
-            if not rest_db.success:
-                await self.logger.error(f"Échec de restauration du snapshot MariaDB : {rest_db.stderr}", step="updates_apply")
-            if files_backup:
-                rest_files = await self._restore_files_backup(files_backup)
-                if rest_files:
-                    await self.logger.success("Fichiers plugins/thèmes restaurés depuis la sauvegarde.", step="updates_apply")
-                else:
-                    await self.logger.error("Échec de restauration des fichiers plugins/thèmes.", step="updates_apply")
+            rest_res = await backup_mgr.restore_backup(backup_res)
+            if not rest_res.success:
+                await self.logger.error(
+                    f"Échec critique lors du rollback : {rest_res.error}",
+                    step="updates_apply",
+                )
+            else:
+                await self.logger.success("Rollback complet (base + fichiers) validé avec succès.", step="updates_apply")
 
         try:
             results = await self._wp.apply_updates(
@@ -686,7 +636,7 @@ class WorkflowOrchestrator:
         )
 
         # Nettoyer l'archive de backup temporaire après succès
-        await self._cleanup_files_backup(files_backup)
+        await backup_mgr.cleanup_backup(backup_res)
 
         async with async_session() as session:
             project = await session.get(Project, self.project_id)

@@ -136,3 +136,142 @@ async def test_screenshot_manager_dom_snapshot():
     assert snapshot["title"] == "Mon Site WP"
     assert snapshot["tree"]["tag"] == "body"
 
+
+@pytest.mark.asyncio
+async def test_vrt_manager_asymmetric_and_workflow_urls(tmp_path, monkeypatch):
+    """Vérifie que les URLs incluent le workflow_id et que les captures asymétriques échouent."""
+    from backend.core.config import Settings
+    monkeypatch.setattr(Settings, "screenshots_dir", property(lambda self: tmp_path / "screenshots"))
+    monkeypatch.setattr(Settings, "reports_dir", property(lambda self: tmp_path / "reports"))
+
+    vrt = VRTManager("test_proj", workflow_id=42)
+
+    # Créer les répertoires before et after
+    base_dir = tmp_path / "screenshots" / "test_proj" / "42"
+    before_dir = base_dir / "before"
+    after_dir = base_dir / "after"
+    before_dir.mkdir(parents=True, exist_ok=True)
+    after_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1 paire normale (home_desktop.png)
+    from PIL import Image
+    img = Image.new("RGB", (100, 100), color=(255, 255, 255))
+    img.save(before_dir / "home_desktop.png")
+    img.save(after_dir / "home_desktop.png")
+
+    # 1 capture dans before absente dans after (crash de la page blog)
+    img.save(before_dir / "blog_desktop.png")
+
+    # 1 capture dans after absente dans before (nouvelle page)
+    img.save(after_dir / "contact_mobile.png")
+
+    report = await vrt.compare_all()
+
+    # Vérifications
+    assert report["total_pages"] == 3
+    assert report["total_passed"] == 1
+    assert report["total_failed"] == 2  # blog (manquant after) + contact (manquant before)
+
+    items_by_page = {item["page_name"]: item for item in report["items"]}
+
+    # URL du screenshot commun
+    home_item = items_by_page["home"]
+    assert home_item["passed"] is True
+    assert home_item["before_path"] == "/static/data/screenshots/test_proj/42/before/home_desktop.png"
+    assert home_item["after_path"] == "/static/data/screenshots/test_proj/42/after/home_desktop.png"
+    assert home_item["diff_image"] == "/static/data/screenshots/test_proj/42/diff/diff_home_desktop.png"
+
+    # Vérification capture manquante post-mise à jour
+    blog_item = items_by_page["blog"]
+    assert blog_item["passed"] is False
+    assert blog_item["after_path"] is None
+    assert blog_item["before_path"] == "/static/data/screenshots/test_proj/42/before/blog_desktop.png"
+    assert "manquante" in blog_item["error"]
+
+
+@pytest.mark.asyncio
+async def test_backup_manager_lifecycle_and_orphan_cleanup(tmp_path):
+    """Vérifie le cycle création/restauration/nettoyage de BackupManager et la purge des fichiers orphelins."""
+    from backend.managers.backup_manager import BackupManager
+    from backend.utils.command import CommandResult
+
+    # Préparer une arborescence WordPress simulée
+    wp_root = tmp_path / "wordpress"
+    plugins_dir = wp_root / "wp-content" / "plugins" / "my-plugin"
+    themes_dir = wp_root / "wp-content" / "themes" / "my-theme"
+    core_dir = wp_root / "wp-admin"
+    plugins_dir.mkdir(parents=True)
+    themes_dir.mkdir(parents=True)
+    core_dir.mkdir(parents=True)
+
+    (plugins_dir / "plugin.php").write_text("<?php // v1.0", encoding="utf-8")
+    (themes_dir / "style.css").write_text("/* theme v1.0 */", encoding="utf-8")
+    (core_dir / "admin.php").write_text("<?php // admin core", encoding="utf-8")
+    (wp_root / "index.php").write_text("<?php // index", encoding="utf-8")
+    (wp_root / "wp-config.php").write_text("<?php // db config", encoding="utf-8")
+
+    # Mocker DDEV
+    mock_ddev = MagicMock()
+    mock_ddev.create_snapshot = AsyncMock(return_value=CommandResult(returncode=0, stdout="Snapshot created", stderr="", command="ddev snapshot"))
+    mock_ddev.restore_snapshot = AsyncMock(return_value=CommandResult(returncode=0, stdout="Snapshot restored", stderr="", command="ddev snapshot restore"))
+
+    bm = BackupManager(
+        project_name="test_proj",
+        project_dir=wp_root,
+        ddev=mock_ddev,
+        workflow_id=123,
+    )
+
+    # 1. Création du backup
+    backup_res = await bm.create_backup("pre_test_snap", backup_core=True)
+    assert backup_res.success is True
+    assert backup_res.tar_path is not None
+    assert backup_res.tar_path.exists()
+    assert mock_ddev.create_snapshot.called
+
+    # 2. Simuler une mise à jour qui ajoute un fichier parasite/orphelin (ex: nouveau script ou version corrompue)
+    (plugins_dir / "plugin.php").write_text("<?php // v2.0 (MODIFIED)", encoding="utf-8")
+    (plugins_dir / "malicious_or_orphan.php").write_text("<?php // added file", encoding="utf-8")
+    assert (plugins_dir / "malicious_or_orphan.php").exists()
+
+    # 3. Restauration du backup
+    restore_res = await bm.restore_backup(backup_res)
+    assert restore_res.success is True
+    assert restore_res.db_restored is True
+    assert restore_res.files_restored is True
+    assert mock_ddev.restore_snapshot.called
+
+    # Le fichier originel doit être restauré à son état v1.0
+    assert (plugins_dir / "plugin.php").read_text(encoding="utf-8") == "<?php // v1.0"
+    # Le fichier orphelin ajouté par la mise à jour doit avoir été totalement supprimé
+    assert not (plugins_dir / "malicious_or_orphan.php").exists()
+    # wp-config.php ne doit pas avoir été corrompu
+    assert (wp_root / "wp-config.php").read_text(encoding="utf-8") == "<?php // db config"
+
+    # 4. Nettoyage
+    await bm.cleanup_backup(backup_res)
+    assert not backup_res.tar_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_backup_manager_db_failure(tmp_path):
+    """Vérifie que BackupManager échoue immédiatement si le snapshot DB échoue."""
+    from backend.managers.backup_manager import BackupManager
+    from backend.utils.command import CommandResult
+
+    mock_ddev = MagicMock()
+    mock_ddev.create_snapshot = AsyncMock(return_value=CommandResult(returncode=1, stdout="", stderr="MariaDB locked", command="ddev snapshot"))
+
+    bm = BackupManager(
+        project_name="fail_proj",
+        project_dir=tmp_path,
+        ddev=mock_ddev,
+    )
+
+    backup_res = await bm.create_backup("pre_fail_snap")
+    assert backup_res.success is False
+    assert "MariaDB locked" in backup_res.error
+    assert backup_res.tar_path is None
+
+
+

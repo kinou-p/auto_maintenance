@@ -8,7 +8,7 @@ depuis les variables d'environnement et le fichier .env.
 from pathlib import Path
 from typing import Literal, Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,17 +63,16 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60 * 24  # 24 heures
 
-    @field_validator("jwt_secret_key", mode="before")
-    @classmethod
-    def _validate_jwt_secret(cls, v, info) -> str:
+    @model_validator(mode="after")
+    def _validate_jwt_in_production(self) -> "Settings":
         insecure_default = "auto_maintenance_super_secret_jwt_key_2026_change_me!"
-        val = str(v).strip() if v else ""
-        import os
-        if not val or val == insecure_default:
-            if os.getenv("APP_ENV") == "production":
-                raise ValueError("En environnement de production, 'JWT_SECRET_KEY' doit impérativement être configurée avec une clé secrète forte.")
-            return val or insecure_default
-        return val
+        val = str(self.jwt_secret_key).strip() if self.jwt_secret_key else ""
+        if self.app_env == "production":
+            if not val or val == insecure_default:
+                raise ValueError(
+                    "En environnement de production, 'JWT_SECRET_KEY' doit impérativement être configurée avec une clé secrète forte."
+                )
+        return self
 
     # --- Database ---
     database_url: str = Field(

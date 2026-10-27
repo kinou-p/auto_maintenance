@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 
 from backend.core.config import settings
+from backend.managers.backup_manager import BackupManager
 from backend.managers.ddev_manager import DDEVManager
 from backend.managers.wordpress_manager import WordPressManager
 from backend.managers.vrt_manager import VRTManager
@@ -49,7 +50,7 @@ async def list_updates(project_id: int) -> UpdatesListResponse:
 
 @router.post("/projects/{project_id}/updates/apply", response_model=UpdatesApplyResponse)
 async def apply_updates(project_id: int, request: UpdatesApplyRequest) -> UpdatesApplyResponse:
-    """Applique les mises à jour sélectionnées avec snapshot préventif garanti."""
+    """Applique les mises à jour sélectionnées avec sauvegarde et restauration préventive garantie (DB + Fichiers)."""
     async with async_session() as session:
         project = await session.get(Project, project_id)
         if not project:
@@ -58,13 +59,14 @@ async def apply_updates(project_id: int, request: UpdatesApplyRequest) -> Update
     ddev = DDEVManager(project.name)
     wp = WordPressManager(project.name, ddev)
 
-    # Création du snapshot préventif
+    # Sauvegarde préventive complète (DB + Fichiers)
     snapshot_name = f"direct_apply_proj_{project_id}"
-    snap_res = await ddev.create_snapshot(snapshot_name)
-    if not snap_res.success:
+    backup_mgr = BackupManager(project.name, wp.project_dir, ddev)
+    backup_res = await backup_mgr.create_backup(snapshot_name, backup_core=request.update_core)
+    if not backup_res.success:
         raise HTTPException(
             500,
-            f"Impossible de créer le snapshot MariaDB préventif avant mise à jour : {snap_res.stderr}",
+            f"Impossible de créer la sauvegarde préventive complète (DB + Fichiers) avant mise à jour : {backup_res.error}",
         )
 
     try:
@@ -74,14 +76,26 @@ async def apply_updates(project_id: int, request: UpdatesApplyRequest) -> Update
             theme_names=request.theme_names,
         )
     except Exception as e:
-        await ddev.restore_snapshot(snapshot_name)
-        raise HTTPException(500, f"Erreur critique lors de la mise à jour (snapshot restauré) : {e}")
+        rest_res = await backup_mgr.restore_backup(backup_res)
+        if rest_res.success:
+            detail = f"Erreur critique lors de la mise à jour (sauvegarde DB + fichiers restaurée avec succès) : {e}"
+        else:
+            detail = f"Erreur critique lors de la mise à jour ET échec de restauration ({rest_res.error}) : {e}"
+        raise HTTPException(500, detail)
 
     total_success = sum(1 for r in results if r.success)
     total_failed = sum(1 for r in results if not r.success)
 
     if results and total_success == 0:
-        await ddev.restore_snapshot(snapshot_name)
+        rest_res = await backup_mgr.restore_backup(backup_res)
+        if rest_res.success:
+            detail = "Toutes les mises à jour ont échoué. La sauvegarde préventive (DB + fichiers) a été restaurée avec succès."
+        else:
+            detail = f"Toutes les mises à jour ont échoué ET la restauration de la sauvegarde a échoué : {rest_res.error}"
+        raise HTTPException(500, detail)
+
+    # Nettoyage de l'archive de sauvegarde temporaire après succès
+    await backup_mgr.cleanup_backup(backup_res)
 
     return UpdatesApplyResponse(
         project_id=project_id,
@@ -178,8 +192,27 @@ async def get_vrt_json_report(project_id: int) -> dict:
 
 @router.get("/screenshots/{project_name}/{phase}/{filename}")
 async def get_screenshot(project_name: str, phase: str, filename: str) -> FileResponse:
-    """Sert un fichier screenshot."""
+    """Sert un fichier screenshot (chemin direct sans workflow_id)."""
     filepath = settings.screenshots_dir / project_name / phase / filename
+    if not filepath.exists():
+        # Fallback : chercher dans les sous-dossiers récents de workflows
+        project_dir = settings.screenshots_dir / project_name
+        if project_dir.exists():
+            for wf_dir in sorted(project_dir.iterdir(), reverse=True):
+                if wf_dir.is_dir():
+                    candidate = wf_dir / phase / filename
+                    if candidate.exists():
+                        return FileResponse(str(candidate), media_type="image/png")
+        raise HTTPException(404, "Screenshot introuvable.")
+    return FileResponse(str(filepath), media_type="image/png")
+
+
+@router.get("/screenshots/{project_name}/{workflow_id}/{phase}/{filename}")
+async def get_screenshot_with_workflow(
+    project_name: str, workflow_id: int, phase: str, filename: str
+) -> FileResponse:
+    """Sert un fichier screenshot indexé par workflow_id."""
+    filepath = settings.screenshots_dir / project_name / str(workflow_id) / phase / filename
     if not filepath.exists():
         raise HTTPException(404, "Screenshot introuvable.")
     return FileResponse(str(filepath), media_type="image/png")
