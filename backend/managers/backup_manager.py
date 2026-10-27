@@ -157,7 +157,8 @@ class BackupManager:
     async def restore_backup(self, backup: BackupResult) -> RestoreResult:
         """
         Restaure la base de données MariaDB et les fichiers WordPress.
-        Nettoie au préalable les dossiers archivés pour supprimer tout fichier orphelin créé par la mise à jour.
+        Vérifie la présence et l'intégrité de l'archive dans un dossier temporaire avant
+        toute suppression ou modification sur le site afin d'éviter tout site amputé ou corrompu.
         """
         await self._log(
             "warning",
@@ -165,35 +166,94 @@ class BackupManager:
             step="updates_apply",
         )
 
-        # 1. Restauration MariaDB
+        has_files_backup = (backup.tar_path is not None) or bool(backup.archived_folders)
+        tmp_extract_dir: Optional[Path] = None
+
+        # 1. Vérification préalable et extraction dans un dossier temporaire
+        if has_files_backup:
+            if not backup.tar_path or not backup.tar_path.exists():
+                err_msg = f"Archive de sauvegarde des fichiers introuvable : {backup.tar_path}"
+                await self._log("error", f"❌ Échec critique : {err_msg}", step="updates_apply")
+                return RestoreResult(
+                    success=False,
+                    db_restored=False,
+                    files_restored=False,
+                    error=err_msg,
+                )
+
+            # Valider l'intégrité de l'archive en l'extrayant dans un répertoire temporaire
+            import tempfile
+            backups_base = self.project_dir / ".ddev" / "backups"
+            backups_base.mkdir(parents=True, exist_ok=True)
+
+            def _test_and_extract() -> tuple[bool, Optional[str], Optional[Path]]:
+                tmp_dir = Path(tempfile.mkdtemp(prefix="wp_restore_", dir=backups_base))
+                try:
+                    with tarfile.open(backup.tar_path, "r:gz") as tar:
+                        tar.extractall(path=tmp_dir)
+                    return True, None, tmp_dir
+                except Exception as e:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                    return False, f"Archive de sauvegarde corrompue ou illisible : {e}", None
+
+            valid_archive, extract_err, tmp_extract_dir = await asyncio.to_thread(_test_and_extract)
+            if not valid_archive or not tmp_extract_dir:
+                err_msg = extract_err or "Impossible d'extraire l'archive de sauvegarde"
+                await self._log("error", f"❌ Abandon du rollback fichiers : {err_msg}", step="updates_apply")
+                return RestoreResult(
+                    success=False,
+                    db_restored=False,
+                    files_restored=False,
+                    error=err_msg,
+                )
+
+        # 2. Restauration MariaDB (après confirmation de la validité de l'archive)
         rest_db = await self.ddev.restore_snapshot(backup.snapshot_name)
         db_ok = rest_db.success
         if not db_ok:
             await self._log("error", f"Échec de restauration du snapshot MariaDB : {rest_db.stderr}", step="updates_apply")
+            if tmp_extract_dir and tmp_extract_dir.exists():
+                shutil.rmtree(tmp_extract_dir, ignore_errors=True)
+            return RestoreResult(
+                success=False,
+                db_restored=False,
+                files_restored=False,
+                error=f"DB: {rest_db.stderr or 'erreur inconnue'}",
+            )
         else:
             await self._log("success", f"Base de données MariaDB restaurée depuis '{backup.snapshot_name}'.", step="updates_apply")
 
-        # 2. Restauration des fichiers WordPress
-        files_ok = True
-        if backup.tar_path and backup.tar_path.exists():
-            def _extract_clean() -> None:
-                # Vider d'abord les répertoires existants qui étaient archivés pour éviter les fichiers résiduels
-                for rel_folder in backup.archived_folders:
-                    target_folder = self.project_dir / rel_folder
-                    if target_folder.exists() and target_folder.is_dir():
-                        shutil.rmtree(target_folder)
-                        target_folder.mkdir(parents=True, exist_ok=True)
+        # 3. Remplacement propre des fichiers WordPress depuis l'extraction validée
+        files_ok = False
+        if has_files_backup and tmp_extract_dir:
+            def _apply_clean_files() -> None:
+                try:
+                    # Remplacer chaque dossier archivé en purgeant d'abord la cible
+                    for rel_folder in backup.archived_folders:
+                        src_folder = tmp_extract_dir / rel_folder
+                        dst_folder = self.project_dir / rel_folder
+                        if src_folder.exists() and src_folder.is_dir():
+                            if dst_folder.exists():
+                                shutil.rmtree(dst_folder)
+                            shutil.copytree(src_folder, dst_folder)
 
-                # Extraire l'archive complète
-                with tarfile.open(backup.tar_path, "r:gz") as tar:
-                    tar.extractall(path=self.project_dir)
+                    # Restaurer les fichiers PHP racine (index.php, wp-*.php hors wp-config.php)
+                    for src_file in tmp_extract_dir.glob("*.php"):
+                        if src_file.name == "wp-config.php":
+                            continue
+                        shutil.copy2(src_file, self.project_dir / src_file.name)
+                finally:
+                    shutil.rmtree(tmp_extract_dir, ignore_errors=True)
 
             try:
-                await asyncio.to_thread(_extract_clean)
+                await asyncio.to_thread(_apply_clean_files)
+                files_ok = True
                 await self._log("success", "Fichiers WordPress intégralement restaurés depuis l'archive de sauvegarde.", step="updates_apply")
             except Exception as e:
                 files_ok = False
-                await self._log("error", f"Échec critique de restauration des fichiers WordPress : {e}", step="updates_apply")
+                await self._log("error", f"Échec de l'application des fichiers restaurés : {e}", step="updates_apply")
+        else:
+            files_ok = True  # Aucun fichier n'était à restaurer
 
         overall_success = db_ok and files_ok
         error_msg = None
@@ -202,13 +262,13 @@ class BackupManager:
             if not db_ok:
                 parts.append(f"DB: {rest_db.stderr or 'erreur inconnue'}")
             if not files_ok:
-                parts.append("Fichiers: échec de décompression ou restauration")
+                parts.append("Fichiers: échec d'application des fichiers restaurés")
             error_msg = " ; ".join(parts)
 
         return RestoreResult(
             success=overall_success,
             db_restored=db_ok,
-            files_restored=files_ok,
+            files_restored=files_ok if has_files_backup else False,
             error=error_msg,
         )
 

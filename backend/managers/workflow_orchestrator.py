@@ -122,6 +122,7 @@ class WorkflowOrchestrator:
 
         self._cancelled = False
         self._current_step: Optional[str] = None
+        self._project_name: Optional[str] = None
         self.logger = WorkflowLogger(project_id, workflow_id)
 
         # Managers (initialisés au lancement)
@@ -130,6 +131,18 @@ class WorkflowOrchestrator:
         self._hosts: Optional[HostsManager] = None
         self._screenshots: Optional[ScreenshotManager] = None
         self._vrt: Optional[VRTManager] = None
+
+    @property
+    def project_name(self) -> str:
+        if self._project_name:
+            return self._project_name
+        if self._wp and hasattr(self._wp, "project_name"):
+            return self._wp.project_name
+        return ""
+
+    @project_name.setter
+    def project_name(self, value: Optional[str]) -> None:
+        self._project_name = value
 
     @property
     def is_cancelled(self) -> bool:
@@ -162,6 +175,8 @@ class WorkflowOrchestrator:
                 project = await session.get(Project, self.project_id)
                 if not project:
                     raise ValueError(f"Projet {self.project_id} introuvable")
+
+                self.project_name = project.name
 
                 # Le claim atomique de la queue passe déjà PENDING→RUNNING.
                 # On s'assure seulement que le statut est cohérent.

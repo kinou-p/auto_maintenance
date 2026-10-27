@@ -274,4 +274,97 @@ async def test_backup_manager_db_failure(tmp_path):
     assert backup_res.tar_path is None
 
 
+@pytest.mark.asyncio
+async def test_backup_manager_missing_archive_fails(tmp_path):
+    """Vérifie qu'une archive inexistante est explicitement rejetée et n'est pas faussement déclarée restaurée."""
+    from backend.managers.backup_manager import BackupManager, BackupResult
+    from backend.utils.command import CommandResult
+
+    mock_ddev = MagicMock()
+    mock_ddev.restore_snapshot = AsyncMock(return_value=CommandResult(returncode=0, stdout="restored", stderr="", command="ddev snapshot restore"))
+
+    bm = BackupManager(
+        project_name="missing_tar_proj",
+        project_dir=tmp_path,
+        ddev=mock_ddev,
+    )
+
+    fake_backup = BackupResult(
+        success=True,
+        snapshot_name="test_snap",
+        tar_path=tmp_path / "non_existent_archive.tar.gz",
+        archived_folders=["wp-content/plugins"],
+    )
+
+    restore_res = await bm.restore_backup(fake_backup)
+    assert restore_res.success is False
+    assert restore_res.files_restored is False
+    assert restore_res.db_restored is False
+    assert not mock_ddev.restore_snapshot.called
+    assert "introuvable" in restore_res.error
+
+
+@pytest.mark.asyncio
+async def test_backup_manager_corrupted_archive_does_not_amputate_site(tmp_path):
+    """Vérifie qu'une archive corrompue n'ampute pas le site (aucun dossier n'est supprimé avant validation)."""
+    from backend.managers.backup_manager import BackupManager, BackupResult
+    from backend.utils.command import CommandResult
+
+    mock_ddev = MagicMock()
+
+    # Créer un dossier plugin avec un fichier sain
+    plugin_dir = tmp_path / "wp-content" / "plugins" / "my-plugin"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.php").write_text("<?php // existing code", encoding="utf-8")
+
+    # Créer une archive corrompue (fichier tar tronqué ou invalide)
+    corrupted_tar = tmp_path / "corrupted.tar.gz"
+    corrupted_tar.write_bytes(b"invalid gzip header random junk data 123456")
+
+    bm = BackupManager(
+        project_name="corrupt_proj",
+        project_dir=tmp_path,
+        ddev=mock_ddev,
+    )
+
+    corrupted_backup = BackupResult(
+        success=True,
+        snapshot_name="test_snap",
+        tar_path=corrupted_tar,
+        archived_folders=["wp-content/plugins"],
+    )
+
+    restore_res = await bm.restore_backup(corrupted_backup)
+    assert restore_res.success is False
+    assert restore_res.files_restored is False
+    assert "corrompue" in restore_res.error.lower() or "impossible" in restore_res.error.lower()
+
+    # Le site ne doit pas avoir été amputé : plugin.php doit toujours exister
+    assert (plugin_dir / "plugin.php").exists()
+    assert (plugin_dir / "plugin.php").read_text(encoding="utf-8") == "<?php // existing code"
+
+
+@pytest.mark.asyncio
+async def test_workflow_orchestrator_project_name_property():
+    """Vérifie que WorkflowOrchestrator possède bien l'attribut/property project_name."""
+    from backend.managers.workflow_orchestrator import WorkflowOrchestrator
+
+    orchestrator = WorkflowOrchestrator(project_id=1, workflow_id=99)
+    # Ne doit pas lever d'AttributeError
+    assert hasattr(orchestrator, "project_name")
+    assert orchestrator.project_name == ""
+
+    # Test avec assignation
+    orchestrator.project_name = "mon_super_projet"
+    assert orchestrator.project_name == "mon_super_projet"
+
+    # Test de fallback sur _wp si self._project_name est None
+    orchestrator._project_name = None
+    mock_wp = MagicMock()
+    mock_wp.project_name = "fallback_project"
+    orchestrator._wp = mock_wp
+    assert orchestrator.project_name == "fallback_project"
+
+
+
 
