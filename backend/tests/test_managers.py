@@ -366,5 +366,36 @@ async def test_workflow_orchestrator_project_name_property():
     assert orchestrator.project_name == "fallback_project"
 
 
+def test_orchestrator_modular_architecture_and_exports():
+    """Vérifie la modularité du package orchestrator et la rétrocompatibilité des imports."""
+    from backend.managers.orchestrator import (
+        WorkflowOrchestrator as PackageOrchestrator,
+        StepError as PackageStepError,
+        WorkflowCancelled as PackageWorkflowCancelled,
+        get_active_workflow as package_get_active_workflow,
+    )
+    from backend.managers.workflow_orchestrator import (
+        WorkflowOrchestrator as ModuleOrchestrator,
+        StepError as ModuleStepError,
+        WorkflowCancelled as ModuleWorkflowCancelled,
+        get_active_workflow as module_get_active_workflow,
+    )
+    from backend.managers.orchestrator.steps_setup import WorkflowSetupStepsMixin
+    from backend.managers.orchestrator.steps_updates import WorkflowUpdatesStepsMixin
+    from backend.managers.orchestrator.steps_visual import WorkflowVisualStepsMixin
+
+    # Identité des classes
+    assert PackageOrchestrator is ModuleOrchestrator
+    assert PackageStepError is ModuleStepError
+    assert PackageWorkflowCancelled is ModuleWorkflowCancelled
+    assert package_get_active_workflow is module_get_active_workflow
+
+    # Héritage des mixins
+    assert issubclass(PackageOrchestrator, WorkflowSetupStepsMixin)
+    assert issubclass(PackageOrchestrator, WorkflowUpdatesStepsMixin)
+    assert issubclass(PackageOrchestrator, WorkflowVisualStepsMixin)
+
+
+
 
 
